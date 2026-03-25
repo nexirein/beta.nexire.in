@@ -37,7 +37,8 @@ export async function GET(req: NextRequest, { params }: Params) {
 
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  const { data: searches, error } = await admin
+  // Use standard supabase client for the actual data fetch to respect RLS
+  const { data: searches, error } = await supabase
     .from("search_conversations")
     .select("id, title, status, accumulated_context, created_at, updated_at, messages")
     .eq("project_id", params.projectId)
@@ -102,7 +103,8 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
-  const { data: conversation, error } = await admin
+  // Use standard supabase client for the insert to respect RLS
+  const { data: conversation, error } = await supabase
     .from("search_conversations")
     .insert({
       user_id: user.id,
