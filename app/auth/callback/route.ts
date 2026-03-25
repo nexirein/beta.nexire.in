@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
     .limit(1);
 
   if (projects && projects.length > 0) {
-    return NextResponse.redirect(`${origin}/projects/${projects[0].id}/search`);
+    return NextResponse.redirect(`${origin}/search?project_id=${projects[0].id}`);
   }
 
   return NextResponse.redirect(`${origin}/projects`);
