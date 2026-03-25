@@ -390,6 +390,7 @@ export function Sidebar() {
       <nav className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around border-t border-gray-200 bg-white px-4 py-2 lg:hidden shadow-lg">
         {[
           { href: "/search", icon: <Search className="h-5 w-5" />, label: "Search" },
+          { href: "/shortlist", icon: <Star className="h-5 w-5" />, label: "Shortlist" },
           { href: "/projects", icon: <Layers className="h-5 w-5" />, label: "Projects" },
           { href: "/contacts", icon: <Users className="h-5 w-5" />, label: "Contacts" },
           { href: "/sequences", icon: <Mail className="h-5 w-5" />, label: "Sequences" },
