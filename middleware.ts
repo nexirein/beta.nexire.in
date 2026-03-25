@@ -15,7 +15,6 @@ import { updateSession } from "@/lib/supabase/middleware";
 const PUBLIC_ROUTES = ["/login", "/signup", "/share", "/auth"];
 
 function isPublicRoute(pathname: string): boolean {
-  if (pathname === "/") return true;
   return PUBLIC_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(route + "/")
   );
@@ -25,15 +24,17 @@ export async function middleware(request: NextRequest) {
   const { response, user } = await updateSession(request);
   const { pathname } = request.nextUrl;
 
-  // Authenticated user on login page → redirect to /projects
-  if (user && (pathname === "/login" || pathname === "/signup")) {
-    return NextResponse.redirect(new URL("/projects", request.url));
+  // Authenticated user on login/signup or root → redirect to /search
+  if (user && (pathname === "/login" || pathname === "/signup" || pathname === "/")) {
+    return NextResponse.redirect(new URL("/search", request.url));
   }
 
-  // Unauthenticated user on protected route → redirect to /login
-  if (!user && !isPublicRoute(pathname)) {
+  // Unauthenticated user on protected route or root → redirect to /login
+  if (!user && (!isPublicRoute(pathname) || pathname === "/")) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("next", pathname);
+    if (pathname !== "/") {
+      loginUrl.searchParams.set("next", pathname);
+    }
     return NextResponse.redirect(loginUrl);
   }
 
