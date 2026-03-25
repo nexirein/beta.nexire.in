@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { SearchClient } from "./SearchClient";
-import { createServerClient } from "@/lib/supabase/server";
+import { createServerClient, createAdminClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -14,24 +14,23 @@ export default async function SearchPage({
   searchParams: { project_id?: string; search_id?: string; project?: string };
 }) {
   const supabase = createServerClient();
-  const projectId = searchParams.project_id ?? searchParams.project ?? undefined;
+  let projectId = searchParams.project_id ?? searchParams.project ?? undefined;
   const searchId = searchParams.search_id ?? undefined;
 
-  // ── Auto-resolve Project ──────────────────────────────────────────────────
+  // ── Auto-resolve Project (using Admin to ensure reliability during landing) ──
   if (!projectId) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return redirect("/login");
 
-    // Get user's profile to find their org
-    const { data: profile } = await supabase
+    const admin = createAdminClient();
+    const { data: profile } = await admin
       .from("profiles")
       .select("org_id")
       .eq("id", user.id)
       .single();
 
     if (profile?.org_id) {
-      // Find the most recently updated project in this org
-      const { data: projects } = await supabase
+      const { data: projects } = await admin
         .from("projects")
         .select("id")
         .eq("org_id", profile.org_id)
@@ -39,20 +38,20 @@ export default async function SearchPage({
         .limit(1);
 
       if (projects && projects.length > 0) {
-        return redirect(`/search?project_id=${projects[0].id}`);
+        projectId = projects[0].id;
+        // Proceed with resolved projectId — we will redirect at the very end to clean up the URL
       }
     }
 
-    // No projects yet? Go to projects list to create one
-    return redirect("/projects");
+    if (!projectId) return redirect("/projects");
   }
 
   // ── Auto-resolve Search ID ────────────────────────────────────────────────
+  let finalSearchId = searchId;
   if (projectId && !searchId) {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
-      // 1. Check if there's an existing IDLE search created by the user in this project today
-      // (This avoids ballooning the DB with useless IDLE records on every fresh visit)
+      // Check for existing IDLE search
       const { data: existingIdle } = await supabase
         .from("search_conversations")
         .select("id")
@@ -64,27 +63,29 @@ export default async function SearchPage({
         .maybeSingle();
 
       if (existingIdle) {
-        return redirect(`/search?project_id=${projectId}&search_id=${existingIdle.id}`);
-      }
-
-      // 2. Create a new search record if no idle one exists
-      const { data: newSearch } = await supabase
-        .from("search_conversations")
-        .insert({
-          user_id: user.id,
-          project_id: projectId,
-          title: "New Search",
-          status: "IDLE",
-          messages: [],
-          accumulated_context: {},
-        })
-        .select("id")
-        .single();
-
-      if (newSearch) {
-        return redirect(`/search?project_id=${projectId}&search_id=${newSearch.id}`);
+        finalSearchId = existingIdle.id;
+      } else {
+        // Create new search
+        const { data: newSearch } = await supabase
+          .from("search_conversations")
+          .insert({
+            user_id: user.id,
+            project_id: projectId,
+            title: "New Search",
+            status: "IDLE",
+            messages: [],
+            accumulated_context: {},
+          })
+          .select("id")
+          .single();
+        if (newSearch) finalSearchId = newSearch.id;
       }
     }
+  }
+
+  // Final Redirect to clean up URL if we resolved anything
+  if (projectId !== searchParams.project_id || finalSearchId !== searchParams.search_id) {
+    return redirect(`/search?project_id=${projectId}&search_id=${finalSearchId}`);
   }
 
   // ── Fetch project title for breadcrumb ────────────────────────────────────
