@@ -41,7 +41,6 @@ export async function GET(req: NextRequest, { params }: Params) {
     .from("search_conversations")
     .select("id, title, status, accumulated_context, created_at, updated_at, messages")
     .eq("project_id", params.projectId)
-    .eq("user_id", user.id)
     .neq("status", "IDLE") // Only show searches that have actually started
     .order("updated_at", { ascending: false })
     .limit(limit);
