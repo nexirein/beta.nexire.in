@@ -13,6 +13,11 @@ export const metadata: Metadata = {
   description:
     "Source, reveal, and engage top talent with Nexire's intelligent recruitment platform. Powered by Prospeo data and AI scoring.",
   keywords: ["recruitment", "hiring", "talent sourcing", "AI", "Nexire"],
+  icons: {
+    icon: "/icon.png",
+    shortcut: "/favicon.ico",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({
