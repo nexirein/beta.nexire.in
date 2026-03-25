@@ -33,9 +33,9 @@ export default function OnboardingPage() {
     }
 
     if (result.projectId) {
-      router.push(`/projects/${result.projectId}`);
+      router.push(`/search?project_id=${result.projectId}`);
     } else {
-      router.push("/projects");
+      router.push("/search");
     }
     router.refresh();
   }

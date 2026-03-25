@@ -43,7 +43,7 @@ export default async function SearchPage({
       }
     }
 
-    if (!projectId) return redirect("/projects");
+    if (!projectId) return redirect("/search");
   }
 
   // ── Auto-resolve Search ID ────────────────────────────────────────────────

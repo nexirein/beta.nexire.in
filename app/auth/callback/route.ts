@@ -139,9 +139,10 @@ export async function GET(request: NextRequest) {
     .order("created_at", { ascending: true })
     .limit(1);
 
-  if (projects && projects.length > 0) {
-    return NextResponse.redirect(`${origin}/search?project_id=${projects[0].id}`);
+  // If no projects, redirect to general search. Otherwise, to project-specific search.
+  if (!projects || projects.length === 0) {
+    return NextResponse.redirect(`${origin}/search`);
   }
 
-  return NextResponse.redirect(`${origin}/projects`);
+  return NextResponse.redirect(`${origin}/search?project_id=${projects[0].id}`);
 }
