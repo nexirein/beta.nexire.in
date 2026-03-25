@@ -1,0 +1,363 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── NEXIRE DESIGN SYSTEM — Section 5 of Build Brief ──────────────────────
+ * Primary:      #4C6DFD  (Nexire blue)
+ * Primary dark: #3A56E8
+ * Background:   #FFFFFF  (light mode)
+ * Surface:      #F8F9FF  (very light blue tint)
+ * Border:       #E8ECFF
+ * Text primary: #0F1629
+ * Text muted:   #6B7280
+ * Gradient:     linear-gradient(135deg, #4C6DFD 0%, #7B9FFF 50%, #B8CFFF 100%)
+ ─────────────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* ── Backgrounds & Surfaces ─────────────────────────────────────────────── */
+  --background:         #FFFFFF;
+  --surface:            #F8F9FF;
+  --surface-raised:     #EEF1FF;
+  --surface-overlay:    #E8ECFF;
+  --surface-sidebar:    #F8F9FF;
+
+  /* bg-* aliases used by legacy components */
+  --bg-elevated:        #FFFFFF;
+  --bg-surface:         #F8F9FF;
+  --bg-overlay:         #EEF1FF;
+
+  /* ── Borders ────────────────────────────────────────────────────────────── */
+  --border:             #E8ECFF;
+  --border-subtle:      rgba(76, 109, 253, 0.12);
+  --border-default:     #E8ECFF;
+  --border-focus:       rgba(76, 109, 253, 0.5);
+
+  /* ── Text ───────────────────────────────────────────────────────────────── */
+  --foreground:         #0F1629;
+  --text-secondary:     #374151;
+  --text-tertiary:      #6B7280;
+  --muted:              #6B7280;
+  --text-disabled:      #9CA3AF;
+
+  /* ── Primary Brand (default: Nexire Blue) ───────────────────────────────── */
+  --primary:            #4C6DFD;
+  --primary-dark:       #3A56E8;
+  --primary-light:      #7B9FFF;
+  --primary-lighter:    #B8CFFF;
+  --primary-glow:       rgba(76, 109, 253, 0.20);
+  --primary-tint:       rgba(76, 109, 253, 0.08);
+
+  /* ── Brand tint scale (auto-computed by useTheme) ───────────────────────── */
+  --brand-50:           rgba(76, 109, 253, 0.05);
+  --brand-100:          rgba(76, 109, 253, 0.10);
+  --brand-200:          rgba(76, 109, 253, 0.16);
+  --brand-300:          rgba(76, 109, 253, 0.25);
+
+  /* Gradient */
+  --gradient-primary:   linear-gradient(135deg, #4C6DFD 0%, #7B9FFF 50%, #B8CFFF 100%);
+  --gradient-hero:      linear-gradient(135deg, #4C6DFD 0%, #7B9FFF 60%, #B8CFFF 100%);
+
+  /* ── Status Colors ──────────────────────────────────────────────────────── */
+  --success:            #10B981;
+  --warning:            #F59E0B;
+  --error:              #EF4444;
+  --info:               #4C6DFD;
+
+  /* ── Score Tier Colors ──────────────────────────────────────────────────── */
+  --score-high:         #10B981;   /* 75+ */
+  --score-mid:          #F59E0B;   /* 50–74 */
+  --score-low:          #6B7280;   /* below 50 */
+
+  /* ── Component dimensions ───────────────────────────────────────────────── */
+  --radius-sm:          8px;
+  --radius-md:          12px;
+  --radius-lg:          16px;
+  --radius-pill:        20px;
+
+  /* ── Shadows ────────────────────────────────────────────────────────────── */
+  --shadow-card:        0 4px 40px rgba(0, 0, 0, 0.03), 0 1px 3px rgba(76, 109, 253, 0.08);
+  --shadow-float:       0 8px 32px rgba(76, 109, 253, 0.12);
+  --shadow-glow:        0 0 20px rgba(76, 109, 253, 0.5);
+  --shadow-sm:          0 1px 3px rgba(76, 109, 253, 0.08);
+}
+
+/* ─── BASE ──────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── SCROLLBAR ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-disabled); }
+
+/* ─── DESIGN SYSTEM COMPONENT CLASSES ──────────────────────────────────── */
+@layer components {
+
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 disabled:cursor-not-allowed;
+    background: #4C6DFD;
+    box-shadow: 0 0 20px rgba(76, 109, 253, 0.3);
+  }
+  .btn-primary:hover {
+    background: #3A56E8;
+    box-shadow: 0 0 28px rgba(76, 109, 253, 0.45);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active { transform: translateY(0); }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border px-5 py-2.5 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2;
+    border-color: #4C6DFD;
+    color: #4C6DFD;
+    background: #FFFFFF;
+  }
+  .btn-secondary:hover {
+    background: rgba(76, 109, 253, 0.06);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-200;
+    color: var(--muted);
+  }
+  .btn-ghost:hover {
+    background: var(--surface);
+    color: var(--foreground);
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-red-600;
+  }
+
+  /* ── Input Fields ────────────────────────────────────────────────────── */
+  .input-field {
+    @apply w-full rounded-lg border px-4 py-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] transition-all duration-200 focus:outline-none;
+    border-color: var(--border);
+    background: var(--background);
+  }
+  .input-field:focus {
+    border-color: #4C6DFD;
+    box-shadow: 0 0 0 3px rgba(76, 109, 253, 0.12);
+  }
+
+  /* ── Cards ───────────────────────────────────────────────────────────── */
+  .card {
+    @apply rounded-2xl p-6 transition-all duration-200;
+    background: var(--background);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-surface {
+    @apply rounded-2xl p-6 transition-all duration-200;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .card-hover {
+    @apply rounded-2xl p-6 transition-all duration-200 cursor-pointer;
+    background: var(--background);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-card);
+  }
+  .card-hover:hover {
+    border-color: #4C6DFD;
+    box-shadow: var(--shadow-float);
+    transform: translateY(-1px);
+  }
+
+  /* Candidate card (white bg, light blue border) */
+  .candidate-card {
+    @apply rounded-xl p-5 transition-all duration-200;
+    background: #FFFFFF;
+    border: 1px solid #E8ECFF;
+    box-shadow: 0 1px 3px rgba(76, 109, 253, 0.06);
+  }
+  .candidate-card:hover {
+    border-color: #4C6DFD;
+    box-shadow: 0 4px 20px rgba(76, 109, 253, 0.12);
+  }
+
+  /* ── Skill Chips ─────────────────────────────────────────────────────── */
+  .skill-chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+    background: #EEF2FF;
+    color: #4C6DFD;
+  }
+
+  .skill-chip-matched {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+    background: rgba(16, 185, 129, 0.12);
+    color: #10B981;
+  }
+
+  /* ── Status Tags ─────────────────────────────────────────────────────── */
+  .tag-pill {
+    @apply inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium;
+  }
+  .tag-blue   { background: rgba(76, 109, 253, 0.1);  color: #4C6DFD; }
+  .tag-green  { background: rgba(16, 185, 129, 0.1);  color: #10B981; }
+  .tag-amber  { background: rgba(245, 158, 11, 0.1);  color: #D97706; }
+  .tag-gray   { background: rgba(107, 114, 128, 0.1); color: #6B7280; }
+  .tag-red    { background: rgba(239, 68, 68, 0.1);   color: #EF4444; }
+
+  /* ── Navigation / Sidebar ────────────────────────────────────────────── */
+  .sidebar-link {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200;
+    color: var(--muted);
+  }
+  .sidebar-link:hover {
+    background: rgba(76, 109, 253, 0.06);
+    color: #4C6DFD;
+  }
+  .sidebar-link-active {
+    @apply sidebar-link;
+    background: rgba(76, 109, 253, 0.1);
+    color: #4C6DFD;
+    font-weight: 600;
+  }
+
+  /* ── Segmented Control / Pill Tabs ───────────────────────────────────── */
+  .segmented-control {
+    @apply flex rounded-full p-1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .segmented-control-item {
+    @apply rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer;
+    color: var(--muted);
+  }
+  .segmented-control-item.active {
+    background: #4C6DFD;
+    color: #FFFFFF;
+    box-shadow: 0 2px 8px rgba(76, 109, 253, 0.3);
+  }
+
+  /* ── Badge / Credit Display ──────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .credit-badge {
+    @apply badge;
+    background: rgba(76, 109, 253, 0.1);
+    color: #4C6DFD;
+  }
+
+  /* ── Glassmorphism Panel ─────────────────────────────────────────────── */
+  .glass {
+    @apply rounded-2xl;
+    background: rgba(248, 249, 255, 0.85);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(76, 109, 253, 0.15);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* ── AI chat messages ────────────────────────────────────────────────── */
+  .ai-message {
+    @apply rounded-xl px-4 py-3 text-sm;
+    background: var(--surface);
+    color: var(--foreground);
+  }
+
+  /* ── Score Arc wrapper (used in CandidateCard) ───────────────────────── */
+  .score-high  { color: var(--score-high); }
+  .score-mid   { color: var(--score-mid); }
+  .score-low   { color: var(--score-low); }
+
+  /* ── Section divider ─────────────────────────────────────────────────── */
+  .section-title {
+    @apply text-xs font-semibold uppercase tracking-widest;
+    color: var(--muted);
+  }
+}
+
+/* ─── UTILITY CLASSES ───────────────────────────────────────────────────── */
+@layer utilities {
+  .gradient-text {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .gradient-bg {
+    background: var(--gradient-primary);
+  }
+
+  .nexire-glow {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4C6DFD] focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+  }
+
+  /* Hover elevation on cards */
+  .hover-lift {
+    @apply transition-all duration-200;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-float);
+  }
+
+  /* Bias warning gradient banner */
+  .bias-warning {
+    @apply rounded-xl px-4 py-3 text-sm;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    color: #92400E;
+  }
+
+  /* Market snapshot panel */
+  .snapshot-panel {
+    @apply rounded-xl p-4;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+}
+
+/* ─── PAGE TRANSITIONS ──────────────────────────────────────────────────── */
+@keyframes fadeIn    { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slideUp   { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes fadeSlide { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes scaleIn   { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
+@keyframes shimmer   { from { background-position: -200% center } to { background-position: 200% center } }
+
+.animate-fade-in    { animation: fadeIn 0.25s ease-out both; }
+.animate-slide-up   { animation: slideUp 0.3s ease-out both; }
+.animate-fade-slide { animation: fadeSlide 0.25s ease-out both; }
+.animate-scale-in   { animation: scaleIn 0.2s ease-out both; }
+
+/* Shimmer skeleton loader */
+.shimmer {
+  background: linear-gradient(90deg, #E8ECFF 25%, #F0F3FF 50%, #E8ECFF 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ─── TOASTER OVERRIDES ─────────────────────────────────────────────────── */
+/* Updated to light mode */

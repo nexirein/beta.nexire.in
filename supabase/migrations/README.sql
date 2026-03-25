@@ -1,0 +1,24 @@
+-- NEXIRE — SUPABASE MIGRATIONS
+-- Owner: nexire-data
+-- Naming: 0001_description.sql, 0002_description.sql, ...
+-- Rules:
+--   1. Additive only — no destructive changes to existing columns without team sign-off
+--   2. Every migration: CREATE TABLE → indexes → RLS → triggers
+--   3. Test locally with `supabase db push` before marking complete
+--   4. Update docs/DATABASE.md to match after every migration
+
+-- Migration files to be created during Phase 1:
+--   0001_create_orgs_and_profiles.sql      ← orgs + profiles + signup trigger
+--   0002_create_projects.sql               ← projects table
+--   0003_create_candidates_and_reveals.sql ← candidates + reveals
+--   0004_create_credits.sql                ← credit_transactions table
+--   0005_create_shortlist.sql              ← shortlist_entries
+--   0006_create_sequences.sql              ← sequences + sequence_enrollments
+--   0007_create_mailboxes.sql              ← mailboxes
+--   0008_create_client_views.sql           ← client_views + client_view_candidates
+--   0009_create_contacts_dnc.sql           ← contacts + dnc_list
+--   0010_create_saved_searches.sql         ← saved_searches
+--   0011_create_org_invitations.sql        ← org_invitations
+--   0012_add_indexes.sql                   ← all performance indexes
+
+-- Phase 0 placeholder — actual migrations start in Phase 1 (M01/M02 build)
