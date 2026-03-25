@@ -292,7 +292,7 @@ function LoginForm() {
           
           <div className="absolute inset-0 flex flex-col justify-center items-center text-center p-20 pb-64">
             <h2 className="text-white text-3xl xl:text-4xl leading-snug font-medium max-w-xl mx-auto drop-shadow-md">
-              Every breakthrough in AI is a story of human ingenuity
+              Behind every great company is someone who found the right people
             </h2>
           </div>
         </div>
