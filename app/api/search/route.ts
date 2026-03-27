@@ -404,6 +404,7 @@ export async function POST(req: NextRequest) {
   // ── 12. Respond ──────────────────────────────────────────────────────────
   return NextResponse.json({
     results: pageResults,
+    full_results: scoredAll, // Return full batch (100) for frontend multi-page caching
     total: totalCount,
     ui_page: ui_page ?? 1,
     total_pages: paginated.totalPages,

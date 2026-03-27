@@ -9,7 +9,7 @@ import { CandidateDrawer } from "@/app/(app)/search/CandidateDrawer";
 
 interface FilterSummaryCardProps {
   onEditFilters?: () => void;
-  onRunSearch?: () => void;
+  onRunSearch?: (force?: boolean) => void;
   onRemoveFilter?: (type: string, value: string) => void;
   onClearFilters?: () => void;
   isLatest?: boolean;
@@ -101,6 +101,7 @@ export function FilterSummaryCard({
     isResolvingFilters: storeIsResolving, 
     isEstimatingMatches: storeIsEstimating,
     cachedResults: storeCachedResults,
+    cachedTotal: storeCachedTotal,
     messages,
     addMessage,
     updateAccumulatedContext,
@@ -115,6 +116,7 @@ export function FilterSummaryCard({
   const isHistorical = !!historicalData && !isLatest;
   const estimatedMatches = isHistorical ? historicalData.total : storeEstimatedMatches;
   const cachedResults = isHistorical ? historicalData.results : storeCachedResults;
+  const cachedTotal = isHistorical ? historicalData.total : storeCachedTotal;
   const isResolvingFilters = isHistorical ? false : storeIsResolving;
   const isEstimatingMatches = isHistorical ? false : storeIsEstimating;
   const cardStatus = isHistorical ? "CONFIRMING" : status;
@@ -211,15 +213,22 @@ export function FilterSummaryCard({
         : [];
 
     // Experience: prefer filterState.experience_min/max
-    const expMin = typeof fs.experience_min === "number" ? fs.experience_min : null;
-    const expMax = typeof fs.experience_max === "number" ? fs.experience_max : null;
+    // Experience display logic
     let expYears: string | null = null;
-    if (expMin !== null || expMax !== null) {
-      if (expMin !== null && expMax !== null) expYears = `${expMin}–${expMax} yrs`;
-      else if (expMin !== null) expYears = `${expMin}+ yrs`;
-      else expYears = `Up to ${expMax} yrs`;
-    } else if (accumulatedContext.experience_years) {
-      expYears = String(accumulatedContext.experience_years);
+    const fsExpMin = typeof fs.experience_min === "number" ? fs.experience_min : null;
+    const fsExpMax = typeof fs.experience_max === "number" ? fs.experience_max : null;
+
+    const finalExpMin = fsExpMin !== null ? fsExpMin : (accumulatedContext.experience_min ?? null);
+    const finalExpMax = fsExpMax !== null ? fsExpMax : (accumulatedContext.experience_max ?? null);
+
+    if (finalExpMin !== null || finalExpMax !== null) {
+      if (finalExpMin !== null && finalExpMax !== null) {
+        expYears = finalExpMin === finalExpMax ? `${finalExpMin} yrs` : `${finalExpMin}–${finalExpMax} yrs`;
+      } else if (finalExpMin !== null) {
+        expYears = `${finalExpMin}+ yrs`;
+      } else {
+        expYears = `Up to ${finalExpMax} yrs`;
+      }
     }
 
     // Past history
@@ -846,7 +855,7 @@ export function FilterSummaryCard({
         </button>
 
         <button
-          onClick={onRunSearch}
+          onClick={() => onRunSearch?.(hasResults)}
           disabled={!isReady || cardStatus === "SEARCHING"}
           className={`
             relative overflow-hidden flex items-center gap-2.5 px-8 py-3 rounded-xl text-[13px] font-bold shadow-lg transition-all active:scale-95
@@ -862,7 +871,7 @@ export function FilterSummaryCard({
             <><span className="animate-pulse">Analyzing pool...</span></>
           ) : (
             <>
-              {hasResults ? `Explore All ${estimatedMatches ?? 0} Candidates` : "Initiate Search"} 
+              {hasResults ? `Explore All ${cachedTotal ?? estimatedMatches ?? 0} Candidates` : "Initiate Search"} 
               <ArrowRight className="w-4 h-4" />
             </>
           )}

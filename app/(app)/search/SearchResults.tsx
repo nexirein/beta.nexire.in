@@ -7,22 +7,28 @@
  *   - {Title} at {Company} · {Location}  (with company logo inline)
  *   - Education institute (with logo below)
  *   - AI score pill on the right
- * Right panel: Full candidate profile panel (scrollable)
+ *   - AI Insight (streamed, highlighted)
+ * Right panel: CandidateDrawer — full-viewport overlay
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CandidateProfilePanel } from "./CandidateProfilePanel";
+import { CandidateDrawer } from "./CandidateDrawer";
 import { EnrollSequenceModal } from "./EnrollSequenceModal";
+import { InsightText } from "@/components/search/InsightText";
 import type { ScoredCandidate } from "@/lib/ai/scorer";
 import {
   MapPin, ChevronRight, ChevronLeft, Mail, Phone, Sparkles,
-  ArrowUp, ArrowDown, X, Globe
+  ArrowUp, ArrowDown, X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { sanitizeTitle } from "@/lib/utils/sanitizeTitle";
 import { CompanyHoverCard } from "@/components/search/CompanyHoverCard";
 import { getProxiedImageUrl } from "@/lib/utils/image-proxy";
+
+/** How many profiles are revealed per batch before the next group streams in */
+const BATCH_SIZE = 5;
 
 const LOGO_DEV_KEY = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN ?? "pk_JgbzA-I-Ssu_JN0iUMq1rQ";
 
@@ -190,6 +196,11 @@ const listItem = {
 
 interface SearchResultsProps {
   results: ScoredCandidate[];
+  /** ID of the current search_conversation — used for AI insight SSE + cache */
+  searchId?: string;
+  /** Keywords from the search intent for highlighting */
+  titleKeywords?: string[];
+  skillKeywords?: string[];
   pagination?: {
     uiPage: number;
     totalPages: number;
@@ -200,43 +211,64 @@ interface SearchResultsProps {
   };
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-export function SearchResults({ results, pagination }: SearchResultsProps) {
+export function SearchResults({
+  results,
+  pagination,
+  searchId,
+  titleKeywords = [],
+  skillKeywords = [],
+}: SearchResultsProps) {
   const [localResults, setLocalResults] = useState(results);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [enrollCandidate, setEnrollCandidate] = useState<ScoredCandidate | null>(null);
+
+  // ── Full-viewport drawer state ───────────────────────────────────────────
+  const [drawerCandidate, setDrawerCandidate] = useState<ScoredCandidate | null>(null);
+  const [drawerIdx, setDrawerIdx] = useState<number | null>(null);
+
+  // ── Batch progressive loading — reveal BATCH_SIZE profiles at a time ─────
+  // visibleCount starts at BATCH_SIZE and grows by BATCH_SIZE every 1.5s
+  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
+  const batchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ── Insight enable gate — a card's insight only starts when visible ───────
+  // We track which person_ids have their insights enabled
+  const [insightEnabled, setInsightEnabled] = useState<Set<string>>(new Set());
 
   // Portal-based Hover Card State
   const [hoveredCompanyIdx, setHoveredCompanyIdx] = useState<number | null>(null);
   const [hoverAnchorRect, setHoverAnchorRect] = useState<DOMRect | null>(null);
-  const hideTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-  const showTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => { setLocalResults(results); setSelectedIdx(null); }, [results]);
-
-  const selected = selectedIdx !== null ? (localResults[selectedIdx] ?? null) : null;
-
-  const handleKey = useCallback((e: KeyboardEvent) => {
-    if (selectedIdx === null) return;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      // Close panel and scroll the row back into view
-      const closingIdx = selectedIdx;
-      setSelectedIdx(null);
-      requestAnimationFrame(() => {
-        const row = document.getElementById(`candidate-row-${closingIdx}`);
-        row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      });
-      return;
-    }
-    if (e.key === "ArrowUp" && selectedIdx > 0) { e.preventDefault(); setSelectedIdx(p => (p as number) - 1); }
-    if (e.key === "ArrowDown" && selectedIdx < localResults.length - 1) { e.preventDefault(); setSelectedIdx(p => (p as number) + 1); }
-  }, [selectedIdx, localResults.length]);
+  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const showTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [handleKey]);
+    setLocalResults(results);
+    // Reset batch reveal whenever results change
+    setVisibleCount(BATCH_SIZE);
+    setInsightEnabled(new Set());
+    if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
+  }, [results]);
+
+  // Progressive batch reveal timer
+  useEffect(() => {
+    if (visibleCount >= localResults.length) return;
+    batchTimerRef.current = setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, localResults.length));
+    }, 1600); // stagger 1.6s between batches
+    return () => {
+      if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
+    };
+  }, [visibleCount, localResults.length]);
+
+  // Enable insights for all currently visible cards
+  useEffect(() => {
+    if (!searchId) return;
+    const visible = localResults.slice(0, visibleCount);
+    setInsightEnabled((prev) => {
+      const next = new Set(prev);
+      visible.forEach((c) => next.add(c.person_id));
+      return next;
+    });
+  }, [visibleCount, localResults, searchId]);
 
   const handleRevealSuccess = (personId: string, type: "email" | "phone", data: { email?: string; phone?: string }) => {
     setLocalResults((prev: ScoredCandidate[]) =>
@@ -267,9 +299,8 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
   };
 
 
-  if (localResults.length === 0) return null;
 
-  const panelOpen = selectedIdx !== null;
+  const drawerOpen = drawerCandidate !== null;
 
   return (
     <div className="flex h-full">
@@ -277,7 +308,7 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
       <div
         className={cn(
           "flex flex-col border-r border-gray-200 bg-white overflow-hidden transition-all duration-300",
-          panelOpen ? "w-[38%] min-w-[340px] flex-shrink-0" : "flex-1"
+          drawerOpen ? "w-[55%] flex-shrink-0" : "flex-1"
         )}
       >
         {/* List header */}
@@ -292,13 +323,9 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {panelOpen ? (
-              <span className="text-[10.5px] text-gray-400 font-medium">
-                ↑↓ navigate · Esc close
-              </span>
-            ) : (
-              <span className="text-[10.5px] text-gray-400 font-medium">Click a row to view profile →</span>
-            )}
+            <span className="text-[10.5px] text-gray-400 font-medium">
+              Click a row to view profile →
+            </span>
           </div>
         </div>
 
@@ -311,7 +338,7 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
             className="flex flex-col"
           >
             {localResults.map((c, idx) => {
-              const isSelected = idx === selectedIdx;
+              const isSelected = idx === drawerIdx;
               const raw: any = c.raw_crustdata_json ?? {};
               const emp0 = raw.current_employers?.[0] ?? null;
               const edu0 = raw.education_background?.[0] ?? null;
@@ -329,12 +356,42 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
               const locationStr = [c.location_city, c.location_state, c.location_country].filter(Boolean).join(", ");
               const displayTitle = sanitizeTitle(c.current_title || "");
 
+              // Only render up to visibleCount (progressive batch loading)
+              if (idx >= visibleCount) {
+                // For cards beyond current batch, show skeleton placeholder
+                return (
+                  <div
+                    key={`skeleton-${idx}`}
+                    className="px-5 py-3.5 border-b border-gray-100 animate-pulse flex items-start gap-3.5"
+                  >
+                    <div className="w-5 pt-2 flex-shrink-0">
+                      <div className="w-3 h-2.5 bg-gray-100 rounded" />
+                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gray-100 flex-shrink-0" />
+                    <div className="flex-1 space-y-2 pt-1">
+                      <div className="w-2/5 h-3.5 bg-gray-100 rounded-full" />
+                      <div className="w-3/5 h-2.5 bg-gray-100 rounded-full" />
+                      <div className="w-1/3 h-2.5 bg-gray-100 rounded-full" />
+                      {/* Insight skeleton */}
+                      <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
+                        <div className="w-full h-2 bg-gray-100 rounded-full" />
+                        <div className="w-4/5 h-2 bg-gray-100 rounded-full" />
+                      </div>
+                    </div>
+                    <div className="w-10 h-7 bg-gray-100 rounded-lg flex-shrink-0" />
+                  </div>
+                );
+              }
+
               return (
                 <motion.button
                   id={`candidate-row-${idx}`}
                   key={c.person_id}
                   variants={listItem}
-                  onClick={() => setSelectedIdx(isSelected ? null : idx)}
+                  onClick={() => {
+                    setDrawerCandidate(c);
+                    setDrawerIdx(idx);
+                  }}
                   className={cn(
                     "w-full text-left px-5 py-3.5 border-b border-gray-100 transition-colors duration-150 relative group",
                     "border-l-[3px]",
@@ -472,7 +529,7 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
                     </div>
 
                     {/* Right: Score */}
-                    <div className="flex-shrink-0 pt-0.5">
+                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0 pt-0.5">
                       <ScorePill score={c.ai_score} />
                     </div>
 
@@ -481,6 +538,28 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
                       <ChevronRight className="w-4 h-4 text-indigo-400 flex-shrink-0 self-center opacity-80" />
                     )}
                   </div>
+
+                  {/* ── AI Insight — below the main row content ────────── */}
+                  {searchId && insightEnabled.has(c.person_id) && (
+                    <div className="pl-[76px] pr-2 pointer-events-none">
+                      <InsightText
+                        personId={c.person_id}
+                        searchId={searchId}
+                        enabled={insightEnabled.has(c.person_id)}
+                        titleKeywords={titleKeywords}
+                        skillKeywords={skillKeywords}
+                        contextData={{
+                          currentTitle: emp0?.title ?? c.current_title ?? "Unknown Title",
+                          currentCompany: emp0?.name ?? c.current_company ?? "Unknown Company",
+                          experienceYears: c.experience_years ?? 0,
+                          skills: Array.isArray(c.skills) ? c.skills.slice(0, 5) : [],
+                          educationStr: edu0 ? `${edu0.degree_name ? edu0.degree_name + " from " : ""}${edu0.institute_name ?? ""}` : null,
+                          summary: raw?.summary ?? c.headline ?? null,
+                          ai_insight: c.ai_insight
+                        }}
+                      />
+                    </div>
+                  )}
                 </motion.button>
               );
             })}
@@ -543,81 +622,32 @@ export function SearchResults({ results, pagination }: SearchResultsProps) {
         </div>
       </div>
 
-      {/* ── Right: Profile Panel ──────────────────────────────────────────── */}
-      <AnimatePresence>
-        {panelOpen && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0, transition: { type: "spring", stiffness: 340, damping: 30 } }}
-            exit={{ opacity: 0, x: 20, transition: { duration: 0.15 } }}
-            className="flex-1 flex flex-col overflow-hidden bg-white min-w-0"
-          >
-            {/* Panel top bar */}
-            <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 bg-white flex-shrink-0 sticky top-0 z-10">
-              <div className="flex items-center gap-3 text-[12px] text-gray-400">
-                <span className="font-semibold text-gray-600 tracking-wide">
-                  {(selectedIdx as number) + 1} of {localResults.length}
-                </span>
-                <span className="w-1 h-1 rounded-full bg-gray-300" />
-                <span>Profile</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setSelectedIdx(p => Math.max(0, (p as number) - 1))}
-                  disabled={selectedIdx === 0}
-                  className="p-1.5 rounded-lg disabled:opacity-30 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                  title="Previous (↑)"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setSelectedIdx(p => Math.min(localResults.length - 1, (p as number) + 1))}
-                  disabled={selectedIdx === localResults.length - 1}
-                  className="p-1.5 rounded-lg disabled:opacity-30 text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                  title="Next (↓)"
-                >
-                  <ArrowDown className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => {
-                    const closingIdx = selectedIdx as number;
-                    setSelectedIdx(null);
-                    requestAnimationFrame(() => {
-                      const row = document.getElementById(`candidate-row-${closingIdx}`);
-                      row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-                    });
-                  }}
-                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors ml-1"
-                  title="Close (Esc)"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Profile content */}
-            <AnimatePresence mode="wait">
-              {selected && (
-                <motion.div
-                  key={selected.person_id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0, transition: { duration: 0.16 } }}
-                  exit={{ opacity: 0, y: -4, transition: { duration: 0.1 } }}
-                  className="flex-1 overflow-y-auto"
-                >
-                  <CandidateProfilePanel
-                    candidate={selected}
-                    onSequenceEnroll={setEnrollCandidate}
-                    onRevealSuccess={(pid: string, type: "email" | "phone", data: any) =>
-                      handleRevealSuccess(pid, type, data as { email?: string; phone?: string })
-                    }
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ── Full-Viewport Candidate Drawer (Quick Preview) ─────────────── */}
+      <CandidateDrawer
+        candidate={drawerCandidate}
+        isOpen={drawerOpen}
+        onClose={() => { setDrawerCandidate(null); setDrawerIdx(null); }}
+        onSequenceEnroll={setEnrollCandidate}
+        onRevealSuccess={(pid, type, data) =>
+          handleRevealSuccess(pid, type, data as { email?: string; phone?: string })
+        }
+        onPrev={() => {
+          if (drawerIdx !== null && drawerIdx > 0) {
+            const prevIdx = drawerIdx - 1;
+            setDrawerIdx(prevIdx);
+            setDrawerCandidate(localResults[prevIdx]);
+          }
+        }}
+        onNext={() => {
+          if (drawerIdx !== null && drawerIdx < localResults.length - 1) {
+            const nextIdx = drawerIdx + 1;
+            setDrawerIdx(nextIdx);
+            setDrawerCandidate(localResults[nextIdx]);
+          }
+        }}
+        hasPrev={drawerIdx !== null && drawerIdx > 0}
+        hasNext={drawerIdx !== null && drawerIdx < localResults.length - 1}
+      />
 
       {/* Sequence modal */}
       {enrollCandidate && (

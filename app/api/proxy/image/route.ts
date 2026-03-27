@@ -2,20 +2,22 @@ import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const imageUrl = searchParams.get('url');
+  const imageId = searchParams.get('id');
+  const legacyUrl = searchParams.get('url');
 
-  if (!imageUrl) {
-    return new NextResponse('Missing URL', { status: 400 });
-  }
+  let targetUrl = '';
 
-  // Security: Only allow Crustdata S3 URLs
-  if (!imageUrl.startsWith('https://crustdata-media.s3.us-east-2.amazonaws.com')) {
-    return new NextResponse('Forbidden: Invalid image source', { status: 403 });
+  if (imageId) {
+    targetUrl = `https://crustdata-media.s3.us-east-2.amazonaws.com/${imageId}`;
+  } else if (legacyUrl && legacyUrl.startsWith('https://crustdata-media.s3.us-east-2.amazonaws.com')) {
+    targetUrl = legacyUrl;
+  } else {
+    return new NextResponse('Forbidden: Invalid image source or missing ID', { status: 403 });
   }
 
   try {
     // Fetch the image from S3
-    const response = await fetch(imageUrl, {
+    const response = await fetch(targetUrl, {
       headers: {
         'Accept': 'image/*'
       }

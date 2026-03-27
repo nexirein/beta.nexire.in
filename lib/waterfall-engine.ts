@@ -42,11 +42,6 @@ export interface WaterfallResult {
   };
 }
 
-// Minimum candidates we want before stopping the waterfall and returning results.
-// Setting this too low (e.g. 1) means we stop after getting 3 candidates even though
-// a later pass with fewer constraints would return 30+ much better candidates.
-// 15 ensures we always try harder before giving up and showing a thin result set.
-const MIN_RESULTS_THRESHOLD = 15;
 /** Results to fetch per API call (costs 3 credits for 100) */
 const FETCH_SIZE = 100;
 /** Results shown per UI page */

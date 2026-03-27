@@ -33,7 +33,7 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
     status, accumulatedContext, messages, setStatus,
     resetSearch, setSearchId, setProjectId,
     setCachedResults, cachedResults, cachedTotal,
-    restoreConversation, setLastCreditsUsed,
+    restoreConversation, setLastCreditsUsed, searchId,
   } = useSearchStore();
 
   const [filters, setFilters] = useState<ProspeoFilters>({});
@@ -151,6 +151,16 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
 
           // Always reset first (now safe to do inside async, after data is available)
           resetSearch();
+          
+          // CRITICAL FIX: We must also wipe LOCAL component state because Next.js soft-navigation
+          // re-uses the SearchClient instance. Otherwise `results` and `isResultsView` stay true!
+          setIsResultsView(false);
+          setResults(null);
+          setFilters({});
+          setResultsMeta(null);
+          pageCacheRef.current = {};
+          passLevelRef.current = 1;
+          hasRunSearchRef.current = false;
 
           // ── Critical: if the conversation is IDLE (just created, empty),
           // treat it as a fresh clean state — don't restore filters or results
@@ -356,7 +366,7 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
 
     // Minimum result count to show results view. Below this, we return to chat
     // and let the AI suggest broadening options — avoiding a silent second API call.
-    const LOW_RESULT_THRESHOLD = 10;
+    const LOW_RESULT_THRESHOLD = 15;
 
     try {
       const res = await fetch("/api/search", {
@@ -390,37 +400,61 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
         });
       }
 
-      // ── Low / zero result recovery ──────────────────────────────────────────
-      // If results are too few to be actionable, go back to chat and let the AI
-      // recommend broadening options. This prevents a silent second 3-credit call.
-      if (data.total <= LOW_RESULT_THRESHOLD) {
-        const ctx = useSearchStore.getState().accumulatedContext;
-        const titleLabel = (ctx.job_titles as string[] | undefined)?.[0] ?? "this role";
-        const locationLabel = (ctx.locations as string[] | undefined)?.[0] ?? "that location";
-        const resultCount = data.total;
+      // Always populate local state and cache, even if we're about to return to chat.
+      // This ensures the FilterSummaryCard can show previews and "Explore All" works instantly.
+      setResults(data.results);
+      setResultsMeta({ 
+        total: data.total, 
+        cached: data.fromCache, 
+        totalPages: data.total_pages || 1, 
+        creditsUsed: data.credits_used 
+      });
+      const currentFullResults = (data.full_results || data.results) as ScoredCandidate[];
+      setCachedResults(currentFullResults, data.total, data.next_cursor);
+      setLastCreditsUsed(data.credits_used);
 
-        // Build the system message the AI will read (Rule 5 in the system prompt)
-        const systemMsg = `[SEARCH_RESULT: ${resultCount} candidate${resultCount === 1 ? "" : "s"} found for ${titleLabel} in ${locationLabel}]`;
-
-        // Return to chat and inject the system message so the AI responds with broadening chips
+      // ── Low / zero result recovery (TALENT SCARCITY DIAGNOSIS) ─────────────
+      // If results are zero, we MUST go back to chat. 
+      // If results are > 0 but < threshold, we stay in Results View (Persistence fix)
+      // but still inject the system message so the AI generates the advice in the chat history.
+      if (data.total === 0 && !forceBypassRef.current) {
+        const systemMsg = `[SEARCH_RESULT: 0 candidates found. Suggest broadening filtering criteria.]`;
         setIsResultsView(false);
         setStatus("COLLECTING");
-        hasRunSearchRef.current = false;
-        passLevelRef.current = 1;
-
-        // Small delay so the chat view is mounted before we trigger the message
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent("nexire:inject_search_result", { detail: { message: systemMsg } }));
         }, 150);
-
         return;
       }
 
+      // If results are low but > 0, we STAY in results view but still inject context to chat
+      if (data.total <= LOW_RESULT_THRESHOLD && data.total > 0 && !forceBypassRef.current) {
+        const ctx = useSearchStore.getState().accumulatedContext;
+        const titleLabel = (ctx.job_titles as string[] | undefined)?.[0] ?? "this role";
+        const locationLabel = (ctx.locations as string[] | undefined)?.[0] ?? "that location";
+        const industry = (ctx.industry as string[] | undefined)?.[0] ?? "Architecture and Planning";
+
+        const systemMsg = `[SEARCH_RESULT: ${data.total} candidates found for ${titleLabel} in ${locationLabel}. INDUSTRY: ${industry}. Suggesting strategic pivots.]`;
+        
+        // DO NOT setIsResultsView(false) — keep results visible!
+        // Just inject the context for the AI to pick up on the next chat turn or in background
+        window.dispatchEvent(new CustomEvent("nexire:inject_search_result", { detail: { message: systemMsg } }));
+        setIsResultsView(true);
+      } else {
+        setIsResultsView(true);
+      }
+
       // ── Normal results — show results view ──────────────────────────────────
-      setResults(data.results);
-      setResultsMeta({ total: data.total, cached: data.fromCache, totalPages: data.total_pages || 1, creditsUsed: data.credits_used });
-      setLastCreditsUsed(data.credits_used);
-      setCachedResults(data.results, data.total, data.next_cursor);
+      forceBypassRef.current = false; // Reset
+      
+      // Populate local component cache for all pages in this batch instantly
+      if (data.full_results) {
+        const itemsPerPage = 15;
+        for (let p = 1; p <= Math.ceil(data.full_results.length / itemsPerPage); p++) {
+          pageCacheRef.current[p] = data.full_results.slice((p - 1) * itemsPerPage, p * itemsPerPage);
+        }
+      }
+
       setUiPage(data.ui_page || 1);
       setIsResultsView(true);
       hasRunSearchRef.current = true;
@@ -471,10 +505,18 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
   };
 
   const isRunningSearchRef = useRef(false);
+  const forceBypassRef = useRef(false);
 
-  const handleRunSearch = () => {
+  // handleRunSearch: triggered by FilterSummaryCard (Explore All) or SearchTerminal (Auto-fill)
+  const handleRunSearch = (force?: boolean) => {
     if (isRunningSearchRef.current) return; // Prevent duplicate triggers
     isRunningSearchRef.current = true;
+    
+    // If user clicked "Explore All", they explicitly want to see results even if < 15.
+    if (force === true) {
+      forceBypassRef.current = true;
+    }
+    
     passLevelRef.current = 1; // Reset to pass 1 when running a fresh search from chat
     setStatus("SEARCHING");
     // Reset guard after 3 seconds
@@ -498,20 +540,43 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
       setSearching(true);
       try {
         const searchId = useSearchStore.getState().searchId;
-        if (!searchId) return;
-        const res = await fetch(`/api/searches/${searchId}/results?page=${newPage}`);
-        const data = await res.json();
-        if (data.results) {
-          setResults(data.results);
-          setUiPage(newPage);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+        if (searchId) {
+          const res = await fetch(`/api/searches/${searchId}/results?page=${newPage}`);
+          const data = await res.json();
+          // ONLY use the DB cache if it ACTUALLY has candidates. 
+          // If it's empty, it means we predicted the page existed based on estimated total,
+          // but we haven't actually fetched it from CrustData yet. Fall through!
+          if (data.results && data.results.length > 0) {
+            setResults(data.results);
+            setUiPage(newPage);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            setSearching(false);
+            return;
+          }
         }
       } catch (err) {
         toast.error("Failed to load page");
-      } finally {
         setSearching(false);
+        return;
       }
-      return;
+      // If we got here, data.results was empty.
+      // ── Pagination Safety Check ──
+      // If the current batch total (stored in state) indicates this page should exist in the first 100,
+      // it means the DB is still syncing. Do NOT skip to the next 100 results!
+      const currentBatchResults = useSearchStore.getState().cachedResults;
+      if (currentBatchResults && currentBatchResults.length > 0) {
+        const itemsPerPage = 15;
+        const maxPageInCurrentBatch = Math.ceil(currentBatchResults.length / itemsPerPage);
+        
+        if (newPage <= maxPageInCurrentBatch) {
+          console.warn(`[Pagination] Page ${newPage} requested but DB returned empty. Batch exists locally. Suppressing skip.`);
+          setResults(currentBatchResults.slice((newPage - 1) * itemsPerPage, newPage * itemsPerPage));
+          setUiPage(newPage);
+          setSearching(false);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          return;
+        }
+      }
     }
 
     // Beyond DB cache — hit CrustData again using nextCursor
@@ -541,13 +606,37 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Search failed");
 
+      if (data.results && data.results.length === 0) {
+        toast.info("You've reached the end of the matching candidates.");
+        useSearchStore.getState().setCachedResults(
+          useSearchStore.getState().cachedResults,
+          resultsMeta?.total ?? null,
+          null // clear cursor
+        );
+        setSearching(false);
+        return;
+      }
+
       setResults(data.results);
+      
+      const fullResults = (data.full_results || data.results) as ScoredCandidate[];
       // Backend returns total_pages = 7 for the new batch. Add to existing.
       const newTotalPages = data.total_pages + (resultsMeta?.totalPages || 0);
-      // Accumulate credits used from previous pages implicitly or just show the latest batch's cost
       setResultsMeta({ total: data.total, cached: data.fromCache, totalPages: newTotalPages, creditsUsed: data.credits_used });
       setLastCreditsUsed(data.credits_used);
-      setCachedResults(data.results, data.total, data.next_cursor);
+      setCachedResults(fullResults, data.total, data.next_cursor);
+
+      // Populate local component cache for the fresh batch
+      if (data.full_results) {
+        const itemsPerPage = 15;
+        // The new batch starts at relative page 1, but we should map it to the NEW global page indices
+        // Actually, just mapping them to the current newPage range is safer.
+        const startPage = newPage; 
+        for (let i = 0; i < Math.ceil(data.full_results.length / itemsPerPage); i++) {
+          pageCacheRef.current[startPage + i] = data.full_results.slice(i * itemsPerPage, (i + 1) * itemsPerPage);
+        }
+      }
+
       setUiPage(newPage);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
@@ -758,6 +847,14 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
               <div className="flex flex-col h-full bg-white">
                 <SearchResults 
                   results={results}
+                  searchId={searchId ?? undefined}
+                  titleKeywords={[
+                    ...((accumulatedContext.job_titles as string[] | undefined) ?? []),
+                    ...((accumulatedContext._resolution as any)?.titleSuggestions ?? []),
+                  ].slice(0, 12)}
+                  skillKeywords={
+                    ((accumulatedContext._resolution as any)?.extraction?.raw_tech as string[] | undefined) ?? []
+                  }
                   pagination={resultsMeta && resultsMeta.totalPages > 1 ? {
                     uiPage,
                     totalPages: Math.max(resultsMeta.totalPages, uiPage + (useSearchStore.getState().nextCursor ? 1 : 0)),

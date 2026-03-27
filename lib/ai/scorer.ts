@@ -58,6 +58,7 @@ export interface ScoredCandidate {
   is_shortlisted: boolean;
   job_history_json: any[];
   raw_crustdata_json?: any;
+  ai_insight?: string;
 }
 
 interface ScoringInput {

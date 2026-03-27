@@ -1,7 +1,8 @@
 "use client";
 // nexire-app — app/(app)/search/CandidateDrawer.tsx
-// Slide-in right drawer for candidate profile. Opens on candidate row click.
-// Inspired by Juicebox's profile side panel — but distinctly Nexire-branded.
+// Full-viewport right-side drawer for candidate Quick Preview.
+// Overlays the ENTIRE dashboard (Sidebar + Topbar + content) via fixed z-50.
+// Left side dims but stays fully readable — no blur.
 
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -32,12 +33,11 @@ export function CandidateDrawer({
   hasPrev,
   hasNext,
 }: CandidateDrawerProps) {
-  // Close on Escape key
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowUp" && hasPrev && onPrev) onPrev();
-      if (e.key === "ArrowDown" && hasNext && onNext) onNext();
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "ArrowUp" && hasPrev && onPrev) { e.preventDefault(); onPrev(); }
+      if (e.key === "ArrowDown" && hasNext && onNext) { e.preventDefault(); onNext(); }
     };
     if (isOpen) {
       window.addEventListener("keydown", handleKey);
@@ -49,36 +49,39 @@ export function CandidateDrawer({
     <AnimatePresence>
       {isOpen && candidate && (
         <>
-          {/* Backdrop — dims list but stays transparent so results are visible */}
+          {/* Backdrop — dims dashboard but NO blur so left content stays readable */}
           <motion.div
             key="drawer-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-40"
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-40"
+            style={{ background: "rgba(15, 22, 41, 0.38)" }}
             onClick={onClose}
           />
 
-          {/* Drawer panel */}
+          {/* Drawer panel — slides in from right, sits above full dashboard */}
           <motion.div
             key="drawer-panel"
-            initial={{ x: "100%", opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: "100%", opacity: 0 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32, mass: 0.9 }}
-            className="fixed right-0 top-0 h-full w-[500px] max-w-[95vw] bg-[var(--bg-elevated)] border-l border-[var(--border-default)] z-50 flex flex-col shadow-2xl"
-            style={{ boxShadow: "-8px 0 40px rgba(0,0,0,0.4)" }}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 340, damping: 32, mass: 0.85 }}
+            className="fixed right-0 top-0 h-full bg-white border-l border-gray-100 z-50 flex flex-col transition-all"
+            style={{
+              width: "min(560px, 45vw)",
+              boxShadow: "-8px 0 40px rgba(0,0,0,0.08)",
+            }}
           >
-            {/* Drawer top control bar */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] flex-shrink-0">
-              <div className="flex items-center gap-2">
-                {/* Prev / Next nav */}
+            {/* ── Top control bar ───────────────────────────────────────── */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={onPrev}
                   disabled={!hasPrev}
                   title="Previous candidate (↑)"
-                  className="p-1.5 rounded-lg disabled:opacity-30 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors disabled:cursor-not-allowed"
+                  className="p-1.5 rounded-lg disabled:opacity-30 text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -86,32 +89,32 @@ export function CandidateDrawer({
                   onClick={onNext}
                   disabled={!hasNext}
                   title="Next candidate (↓)"
-                  className="p-1.5 rounded-lg disabled:opacity-30 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors disabled:cursor-not-allowed"
+                  className="p-1.5 rounded-lg disabled:opacity-30 text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors disabled:cursor-not-allowed"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
-                <span className="text-[11px] text-[var(--text-tertiary)] font-mono ml-1">
+                <span className="text-[11px] text-gray-400 font-medium ml-1 select-none">
                   Press ↑↓ to navigate
                 </span>
               </div>
 
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
                 title="Close (Esc)"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Scrollable profile content */}
-            <div className="flex-1 overflow-y-auto hide-scrollbar">
+            {/* ── Scrollable profile content ───────────────────────────── */}
+            <div className="flex-1 overflow-y-auto">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={candidate.person_id}
                   initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0, transition: { duration: 0.2 } }}
-                  exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
+                  animate={{ opacity: 1, y: 0, transition: { duration: 0.18 } }}
+                  exit={{ opacity: 0, y: -8, transition: { duration: 0.12 } }}
                   className="h-full"
                 >
                   <CandidateProfilePanel

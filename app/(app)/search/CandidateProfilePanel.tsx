@@ -252,6 +252,18 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
     : null;
   const locationStr = [location_city, location_state, location_country].filter(Boolean).join(", ");
 
+  let aiSignal = "";
+  try {
+    if (candidate.ai_insight && candidate.ai_insight.trim().startsWith("{")) {
+      const parsed = JSON.parse(candidate.ai_insight);
+      aiSignal = parsed.signal;
+    } else {
+      aiSignal = candidate.ai_insight || "";
+    }
+  } catch (e) {
+    aiSignal = candidate.ai_insight || "";
+  }
+
   const seen = new Set<string>();
   const employers = allEmployers.filter((e: any) => {
     const k = String(e.position_id ?? `${e.name}|${e.title}|${e.start_date}`);
@@ -560,6 +572,19 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
         
         {/* OVERVIEW */}
         <section id="section-overview" className="scroll-mt-[80px]">
+            {aiSignal && (
+              <div className="mb-8 p-4 bg-indigo-50/40 border-l-4 border-indigo-400 rounded-r-xl relative overflow-hidden group">
+                <Sparkles className="absolute -right-2 -top-2 w-12 h-12 text-indigo-100/50 -rotate-12 transition-transform group-hover:scale-110" />
+                <p className="text-[14.5px] font-bold text-indigo-900 leading-relaxed italic relative z-10">
+                  "{aiSignal}"
+                </p>
+                <div className="mt-2 flex items-center gap-1.5 opacity-60">
+                  <Sparkles className="w-3 h-3 text-indigo-400" />
+                  <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">AI MATCH SIGNAL</span>
+                </div>
+              </div>
+            )}
+
             {summary && (
               <div className="mb-6">
                 <h3 className="text-[14px] font-bold text-gray-900 mb-2">About</h3>

@@ -68,6 +68,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     .select(`
       rank,
       ai_score,
+      ai_insight,
       people:people (*)
     `)
     .eq("search_id", params.searchId)
@@ -98,6 +99,7 @@ export async function GET(req: NextRequest, { params }: Params) {
         .select(`
           rank,
           ai_score,
+          ai_insight,
           people:people (*)
         `)
         .eq("search_id", params.searchId)
@@ -178,6 +180,7 @@ export async function GET(req: NextRequest, { params }: Params) {
 
       // AI scoring (using either global or search-specific snapshot)
       ai_score:           Number(item.ai_score || p.ai_score || 50),
+      ai_insight:         item.ai_insight || null,
       match_label,
       score_breakdown:    p.score_breakdown_json,
 
@@ -350,7 +353,8 @@ export async function POST(req: NextRequest, { params }: Params) {
       search_id: params.searchId,
       person_id: id,
       rank: idx,
-      ai_score: results[idx]?.ai_score || 0
+      ai_score: results[idx]?.ai_score || 0,
+      ai_insight: results[idx]?.ai_insight
     }));
 
     await admin.from("search_result_items").upsert(junctionRows, {

@@ -28,7 +28,7 @@ export function CandidateCard({ candidate, onReveal, onSequenceEnroll }: Candida
   const {
     person_id, full_name, headline, current_company, location_city, location_country,
     skills, linkedin_url, ai_score, match_label,
-    notice_label, current_title, open_to_work
+    notice_label, current_title, open_to_work, ai_reason,
   } = candidate;
 
   const [emailLoading, setEmailLoading] = useState(false);
@@ -162,6 +162,20 @@ export function CandidateCard({ candidate, onReveal, onSequenceEnroll }: Candida
             <p className="text-sm text-[var(--muted)] truncate mt-0.5">
               {displayTitle}
             </p>
+          )}
+
+          {/* Match reason tags — sourced from ai_reason score breakdown */}
+          {ai_reason && (
+            <div className="flex flex-wrap items-center gap-1 mt-1.5">
+              {ai_reason.split(" • ").map((reason) => (
+                <span
+                  key={reason}
+                  className="text-[9px] px-1.5 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-500/5 text-emerald-400/80 font-medium tracking-wide"
+                >
+                  {reason}
+                </span>
+              ))}
+            </div>
           )}
 
           {/* Meta row */}

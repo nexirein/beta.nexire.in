@@ -222,11 +222,9 @@ export function resolveCrustDataIndustries(rawIndustries: string[]): string[] {
     }
 
     // Check against our map keys (e.g. "software" -> ["Software Development", ...])
-    let matched = false;
     for (const [key, values] of Object.entries(CRUSTDATA_INDUSTRY_MAP)) {
       if (lower.includes(key) || key.includes(lower)) {
         values.forEach((v) => result.add(v));
-        matched = true;
         break;
       }
     }

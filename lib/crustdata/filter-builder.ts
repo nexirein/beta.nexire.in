@@ -178,14 +178,16 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   const booleanExpression = state.boolean_expression?.trim();
   const titleMode = state.title_mode ?? "current_only";
 
+  const coreRoleConditions: CrustDataFilterTree[] = [];
+
   if (booleanExpression) {
     // Boolean expression always targets current title; mode doesn't override it
     const boolFilter = parseBooleanExpressionToFilters(booleanExpression);
-    if (boolFilter) conditions.push(boolFilter);
+    if (boolFilter) coreRoleConditions.push(boolFilter);
   } else if (titles.length > 0) {
     if (titleMode === "current_only") {
       // Default: only people who currently hold one of these titles
-      conditions.push(fuzzyOR("current_employers.title", titles));
+      coreRoleConditions.push(fuzzyOR("current_employers.title", titles));
 
     } else if (titleMode === "current_recent") {
       // Current OR held within the last 2 years
@@ -199,11 +201,11 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
         fuzzyOR("past_employers.title", titles),
         simpleFilter("past_employers.end_date", "=>", cutoff),
       ]);
-      conditions.push(or([currentTitleFilter, recentPastFilter]));
+      coreRoleConditions.push(or([currentTitleFilter, recentPastFilter]));
 
     } else if (titleMode === "current_and_past") {
       // Entire career: search across all (current + past) employers
-      conditions.push(fuzzyOR("all_employers.title", titles));
+      coreRoleConditions.push(fuzzyOR("all_employers.title", titles));
 
     } else if (titleMode === "nested_companies") {
       // Title scoped to the same employer record as the selected companies.
@@ -214,10 +216,10 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
         // Nested AND: title + company within the same current_employers record
         const titleNode = fuzzyOR("current_employers.title", titles);
         const companyNode = fuzzyOR("current_employers.name", companyNames);
-        conditions.push(and([titleNode, companyNode]));
+        coreRoleConditions.push(and([titleNode, companyNode]));
       } else {
         // No companies selected yet, fall back to current-only
-        conditions.push(fuzzyOR("current_employers.title", titles));
+        coreRoleConditions.push(fuzzyOR("current_employers.title", titles));
       }
 
     } else if (titleMode === "funding_stage") {
@@ -237,7 +239,7 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
           simpleFilter("current_employers.company_funding_latest", "=<", fundingMax * 1_000_000)
         );
       }
-      conditions.push(fundingConditions.length > 1 ? and(fundingConditions) : fundingConditions[0]);
+      coreRoleConditions.push(fundingConditions.length > 1 ? and(fundingConditions) : fundingConditions[0]);
     }
   }
 
@@ -249,7 +251,7 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   // ─── Past Titles ───────────────────────────────────────────────────────────
   const pastTitles = (state.past_titles ?? []).filter(Boolean);
   if (pastTitles.length > 0) {
-    conditions.push(fuzzyOR("past_employers.title", pastTitles));
+    coreRoleConditions.push(fuzzyOR("past_employers.title", pastTitles));
   }
 
   // ─── Function Category (LinkedIn job function) ────────────────────────────
@@ -287,8 +289,6 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
 
     // Dedupe regions — if multiple cities overlap (e.g. Delhi + Noida + Ghaziabad
     // are all within 30mi of each other), keep only the primary/most-specific city.
-    const primaryRegion = regionsToSearch[0];
-    const primaryCity = primaryRegion.split(",")[0].trim();
 
     // Build all per-region location conditions
     const locationConditions: CrustDataFilterTree[] = [];
@@ -317,14 +317,21 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
       }
     }
 
-    // GEO_DISTANCE — always include for radius-based search accuracy.
-    // Uses the fully-resolved location string (e.g. "Vadodara Taluka, Gujarat, India")
-    // which geocodes precisely and finds candidates within the specified radius.
-    locationConditions.push(simpleFilter("region", "geo_distance", {
-      location: primaryRegion,
-      distance: radiusMiles,
-      unit: "mi",
-    }));
+    // GEO_DISTANCE — generate one radius bubble per location so that
+    // adding a second city (e.g. Delhi + Noida) EXPANDS the pool, not shrinks it.
+    // All bubbles are OR'd together with the text-match conditions above.
+    const addedGeo = new Set<string>();
+    for (const loc of regionsToSearch) {
+      const normalized = loc.trim().toLowerCase();
+      if (!addedGeo.has(normalized)) {
+        addedGeo.add(normalized);
+        locationConditions.push(simpleFilter("region", "geo_distance", {
+          location: loc,
+          distance: radiusMiles,
+          unit: "mi",
+        }));
+      }
+    }
 
     conditions.push(locationConditions.length === 1 ? locationConditions[0] : or(locationConditions));
 
@@ -460,23 +467,37 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
     conditions.push(fuzzyOR("profile_language", profileLangs));
   }
 
-  // ─── Education ────────────────────────────────────────────────────────────
+  // ─── Education (Optional OR Feature) ──────────────────────────────────────
+  const eduConditions: CrustDataFilterTree[] = [];
+  
   // Schools are typically from LLM extraction (not autocomplete) → (.) fuzzy
   const schools = (state.education_school ?? []).filter(Boolean);
   if (schools.length > 0) {
-    conditions.push(fuzzyOR("education_background.institute_name", schools));
+    eduConditions.push(fuzzyOR("education_background.institute_name", schools));
   }
 
   // Degrees are user-typed (e.g. "Bachelor's", "MBA") → (.) fuzzy
   const degrees = (state.education_degree ?? []).filter(Boolean);
   if (degrees.length > 0) {
-    conditions.push(fuzzyOR("education_background.degree_name", degrees));
+    eduConditions.push(fuzzyOR("education_background.degree_name", degrees));
   }
 
   // Field of study is user-typed → (.) fuzzy
   const fields = (state.education_field_of_study ?? []).filter(Boolean);
   if (fields.length > 0) {
-    conditions.push(fuzzyOR("education_background.field_of_study", fields));
+    eduConditions.push(fuzzyOR("education_background.field_of_study", fields));
+  }
+
+  // Combine Core Role and Education in an OR relationship
+  // This supports the "optional not mandatory" intent ("broader usecase scenario")
+  // e.g., "Find an Architect OR anyone with a BArch degree"
+  if (coreRoleConditions.length > 0 && eduConditions.length > 0) {
+    const combinedCore = coreRoleConditions.length === 1 ? coreRoleConditions[0] : and(coreRoleConditions);
+    const combinedEdu = eduConditions.length === 1 ? eduConditions[0] : or(eduConditions); // any edu match
+    conditions.push(or([combinedCore, combinedEdu]));
+  } else {
+    conditions.push(...coreRoleConditions);
+    conditions.push(...eduConditions);
   }
 
   // Graduation Year (filter on end_date of education)

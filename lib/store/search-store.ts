@@ -13,7 +13,8 @@ export interface AccumulatedContext {
   job_titles?: string[];
   locations?: string[];
   technologies?: string[];
-  experience_years?: string | null;
+  experience_min?: number | null;
+  experience_max?: number | null;
   seniority?: string[];
   industry?: string[];
   company_type?: string[];
@@ -79,6 +80,7 @@ export interface SearchStore {
   setIsResolvingFilters: (v: boolean) => void;
   setIsEstimatingMatches: (v: boolean) => void;
   setCachedResults: (results: ScoredCandidate[] | null, total: number | null, nextCursor?: string | null) => void;
+  updateCandidateInsight: (personId: string, insight: string) => void;
   setLastCreditsUsed: (count: number | null) => void;
   resetSearch: () => void;
   /** Atomically restore a full persisted search session (messages + context + status) */
@@ -138,6 +140,11 @@ export const useSearchStore = create<SearchStore>((set) => ({
   setIsResolvingFilters: (v) => set({ isResolvingFilters: v }),
   setIsEstimatingMatches: (v) => set({ isEstimatingMatches: v }),
   setCachedResults: (results, total, nextCursor) => set({ cachedResults: results, cachedTotal: total, nextCursor: nextCursor ?? null }),
+  updateCandidateInsight: (personId, insight) => set((state) => ({
+    cachedResults: state.cachedResults?.map(c => 
+      String(c.person_id) === String(personId) ? { ...c, ai_insight: insight } : c
+    ) || null
+  })),
   setLastCreditsUsed: (count) => set({ lastCreditsUsed: count }),
 
   resetSearch: () => set({

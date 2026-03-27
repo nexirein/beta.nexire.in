@@ -522,13 +522,16 @@ function SearchesSection({ activeProjectId, recentSearches, setRecentSearches, i
           <Search className="h-3.5 w-3.5 text-brand-500" />
           <span className="text-sm font-semibold text-text-primary">Searches</span>
         </div>
-        <Link
-          href={activeProjectId ? `/search?project_id=${activeProjectId}` : "/search"}
+        <button
+          onClick={() => {
+            const url = activeProjectId ? `/search?project_id=${activeProjectId}&t=${Date.now()}` : `/search?t=${Date.now()}`;
+            window.location.href = url;
+          }}
           className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-500 text-white hover:bg-brand-600 transition-colors shadow-sm"
           title="New Search"
         >
           <Plus className="h-3.5 w-3.5" />
-        </Link>
+        </button>
       </div>
 
       {/* Search items */}

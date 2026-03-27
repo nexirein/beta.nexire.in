@@ -27,6 +27,9 @@ import { assembleCrustDataFilters } from "@/lib/ai/filter-assembler";
 import { redis } from "@/lib/redis/client";
 import { crustdataRealtimeAutocomplete } from "@/lib/crustdata/client";
 import { resolveIndustries } from "@/lib/crustdata/filter-vector-search";
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ── CrustData Autocomplete Helpers ─────────────────────────────────────────────
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -91,6 +94,71 @@ async function batchedSuggestions<T>(
   return results;
 }
 
+// ── Dynamic Domain-Aware Title Expansion ───────────────────────────────────────
+async function generateDomainAwareTitleCluster(titles: string[], industries: string[]): Promise<string[]> {
+  if (titles.length === 0) return [];
+  const cacheKey = `crustdata:suggest:domain_cluster:v1:${JSON.stringify({ titles, industries }).toLowerCase().replace(/\s+/g, "_")}`;
+
+  if (redis.isAvailable) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) return JSON.parse(cached) as string[];
+    } catch { /* ignore */ }
+  }
+
+  try {
+    const prompt = `
+You are an expert Headhunter and Talent Intelligence system.
+Given these base job titles: ${JSON.stringify(titles)}
+And these industries (if any): ${JSON.stringify(industries)}
+
+Your task: Return a JSON array of strings containing the FULL semantic cluster of equivalent LinkedIn job titles for this specific role and seniority band in this specific domain.
+
+CRITICAL INSTRUCTION: Understand domain-specific naming conventions!
+- In Investment Banking: "Managing Director" = Partner/Owner equivalent.
+- In Law Firms: "Associate" = Junior/Mid level.
+- In Architecture/Design Firms: "Associate" or "Senior Associate" = Senior/Principal level.
+- In Academia: "Assistant Professor" = Tenure-track but junior to "Associate Professor".
+- In Tech: "Staff Engineer" = "Principal Engineer" at some companies.
+
+Rules:
+1. ONLY return titles that represent the SAME seniority band and function. Do NOT include junior roles if the base titles are senior, and vice versa.
+2. Return ONLY natural LinkedIn titles (e.g. "Software Engineer" not "SWE III").
+3. Do not invent completely different roles (e.g. if the input is "Fleet Manager", do not return "Logistics Director").
+4. Return 3 to 8 titles. Include the base titles if they are natural LinkedIn strings.
+5. Provide ONLY a JSON array of strings. No markdown, no explanation.
+
+Example Input: titles: ["Architect", "Senior Architect"], industries: ["Architecture & Planning"]
+Example Output: ["Senior Architect", "Project Architect", "Design Architect", "Associate", "Senior Associate", "Principal Architect", "Lead Architect"]
+`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      }
+    });
+
+    const raw = response.text;
+    if (!raw) return [];
+    
+    const parsed = JSON.parse(raw);
+    const results = Array.isArray(parsed) ? parsed.filter(t => typeof t === "string") : [];
+
+    if (redis.isAvailable && results.length > 0) {
+      redis.set(cacheKey, JSON.stringify(results), { ex: 60 * 60 * 24 * 7 }).catch(() => {});
+    }
+    
+    return results;
+  } catch (err) {
+    console.error("[Domain Cluster AI Error]", err);
+    return [];
+  }
+}
+
+
 // ── Intent → title count config ────────────────────────────────────────────────
 function getIntentConfig(intent: string | null | undefined) {
   switch (intent) {
@@ -132,9 +200,36 @@ export async function POST(req: NextRequest) {
     const userTitles: string[] = Array.isArray(accumulatedContext.job_titles)
       ? accumulatedContext.job_titles.filter(Boolean)
       : [];
-    const userLocations: string[] = Array.isArray(accumulatedContext.locations)
-      ? accumulatedContext.locations.filter(Boolean)
-      : [];
+    // ── Granular Location Parser ──────────────────────────────────────────────
+    const COMMON_COUNTRIES = new Set([
+      "india", "usa", "united states", "uk", "united kingdom", "canada", "australia",
+      "germany", "france", "uae", "singapore", "netherlands", "brazil", "russia"
+    ]);
+
+    const parseLocationStrings = (locs: any[]): string[] => {
+      if (!Array.isArray(locs)) return [];
+      const flat = locs
+        .filter(Boolean)
+        .flatMap(loc => {
+          const s = String(loc);
+          // Split by comma first
+          if (s.includes(",")) return s.split(",").map(x => x.trim());
+          // If no comma but contains a space and looks like "Area City" (e.g. "Indiranagar Bangalore")
+          // we prefer to split it if it's a known common pattern, but for now we'll stick to 
+          // splitting by common delimiters.
+          return [s.trim()];
+        })
+        .filter(s => s.length > 0);
+      
+      // Filter out broad country names unless the list would become empty
+      // This is what the user asked for: "make the broader like banglore must , but not for country"
+      const filtered = flat.filter(s => !COMMON_COUNTRIES.has(s.toLowerCase()));
+      const final = filtered.length > 0 ? filtered : flat;
+      
+      return Array.from(new Set(final));
+    };
+
+    const userLocations: string[] = parseLocationStrings(accumulatedContext.locations);
     const userIndustries: string[] = Array.isArray(accumulatedContext.industry)
       ? accumulatedContext.industry.filter(Boolean)
       : [];
@@ -159,8 +254,11 @@ export async function POST(req: NextRequest) {
     const userExcludeTitles: string[] = Array.isArray(accumulatedContext.exclude_job_titles)
       ? accumulatedContext.exclude_job_titles.filter(Boolean)
       : [];
-    const experienceMin = accumulatedContext.experience_years
-      ? parseInt(String(accumulatedContext.experience_years), 10) || null
+    const experienceMin = typeof accumulatedContext.experience_min === 'number'
+      ? accumulatedContext.experience_min
+      : null;
+    const experienceMax = typeof accumulatedContext.experience_max === 'number'
+      ? accumulatedContext.experience_max
       : null;
 
     // ── Step 2: Intent-controlled seeding ──────────────────────────────────────
@@ -186,10 +284,25 @@ export async function POST(req: NextRequest) {
 
     // Resolved titles: user's titles always pinned at front, autocomplete follows.
     // Trim to intent-controlled max so we don't send 8 titles when user wanted tight.
-    const allResolvedTitles = Array.from(new Set([
+    let allResolvedTitles = Array.from(new Set([
       ...userTitles,               // pinned first — user's explicit request
       ...titleSuggsBySeeed.flat(), // CrustData autocomplete (LinkedIn-native variants)
     ])).slice(0, maxTitles);
+
+    // ── Dynamic Domain-Aware Title Cluster Injection ───────────────────────────
+    // For balanced/wide searches, leverage Gemini to capture domain-specific
+    // equivalencies (like "Associate" meaning senior in Architecture but junior in Law).
+    // This semantic expansion resolves titles that CrustData autocomplete misses.
+    if (searchIntent !== "tight" && !skipExpansion && userTitles.length > 0) {
+      const dynamicCluster = await generateDomainAwareTitleCluster(userTitles, userIndustries);
+      if (dynamicCluster.length > 0) {
+        allResolvedTitles = Array.from(new Set([
+          ...userTitles,              // user's explicit titles always first
+          ...dynamicCluster,          // domain-aware semantic cluster
+          ...allResolvedTitles,       // autocomplete generic variants
+        ])).slice(0, Math.max(maxTitles, 8)); // allow up to 8 for full cluster expression
+      }
+    }
 
     // Resolved regions: prefer CrustData's canonical region string (e.g. "Vadodara Taluka, Gujarat, India")
     // because it geocodes precisely for radius search. Fall back to a Title-Cased version of the
@@ -225,7 +338,7 @@ export async function POST(req: NextRequest) {
       similar_industries: [],
       person_seniority: userSeniority,
       raw_experience_min: experienceMin,
-      raw_experience_max: null as number | null,
+      raw_experience_max: experienceMax,
       company_headcount_range: userHeadcount,
       company_funding_stage: userFunding,
       raw_school: userSchools,

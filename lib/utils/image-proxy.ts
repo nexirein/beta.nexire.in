@@ -11,7 +11,10 @@ export function getProxiedImageUrl(url: string | null | undefined): string | nul
   // We only proxy Crustdata S3 URLs for candidate privacy.
   // Other sources (like img.logo.dev) can remain direct for performance.
   if (url.includes('crustdata-media.s3.us-east-2.amazonaws.com')) {
-    return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+    const path = url.split('crustdata-media.s3.us-east-2.amazonaws.com/')[1];
+    if (path) {
+      return `/api/proxy/image?id=${encodeURIComponent(path)}`;
+    }
   }
 
   // Return original URL for non-S3 sources

@@ -149,15 +149,10 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
 
       const hasPendingWidgets = Array.isArray(data.suggested_questions) && data.suggested_questions.length > 0;
 
-      if (data.ready_for_search && !hasPendingWidgets) {
-        setEstimatedMatches(null);
-        updateAccumulatedContext({ _resolvedFilters: undefined, _resolution: undefined });
+      // ── Background Filter Sync ─────────────────────────────────────────────
+      // Always trigger background resolution to keep the manual FilterModal in sync
+      if (data.updated_context || (data.ready_for_search && !hasPendingWidgets)) {
         setIsResolvingFilters(true);
-        setIsEstimatingMatches(false);
-        setCachedResults(null, null);
-
-        setStatus("CONFIRMING");
-
         (async () => {
           try {
             const resolveRes = await fetch("/api/ai/context-to-filters", {
@@ -167,50 +162,43 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
             });
             const resolvedData = await resolveRes.json();
 
-            if (!resolveRes.ok || !resolvedData.filters) {
-              setIsResolvingFilters(false);
-              return;
+            if (resolveRes.ok && resolvedData.filters) {
+              useSearchStore.getState().updateAccumulatedContext({
+                _resolvedFilters: resolvedData.filters,
+                _resolution: resolvedData.resolution,
+                requirement_summary: resolvedData.requirementSummary || null,
+              });
             }
-
-            useSearchStore.getState().updateAccumulatedContext({
-              _resolvedFilters: resolvedData.filters,
-              _resolution: resolvedData.resolution,
-              requirement_summary: resolvedData.requirementSummary || null,
-            });
-            setIsResolvingFilters(false);
-              // (Removed automatic /api/search call to prevent double fetching)
-              // Wait for user to click "Run Search"
-              
-              const currentSid = useSearchStore.getState().searchId;
-              if (currentSid) {
-                const ctx = useSearchStore.getState().accumulatedContext;
-                const autoTitle = generateSearchTitle(ctx);
-                
-                await fetch(`/api/searches/${currentSid}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    title: autoTitle,
-                    prospeo_filters: resolvedData.filters,
-                    estimated_matches: null,
-                    status: "CONFIRMING",
-                  }),
-                }).catch(() => {});
-
-                window.dispatchEvent(new CustomEvent("searchRename", { detail: { id: currentSid, title: autoTitle } }));
-              }
-              
-              // We do not call onResultsReady since results are not fetched yet
-              // onResultsReady?.([], 0, resolvedData.filters);
-
-            setIsResolvingFilters(false);
-            setIsEstimatingMatches(false);
           } catch (e) {
             console.error("Background filter resolution failed", e);
+          } finally {
             setIsResolvingFilters(false);
-            setIsEstimatingMatches(false);
           }
         })();
+      }
+
+      if (data.ready_for_search && !hasPendingWidgets) {
+        setEstimatedMatches(null);
+        setIsEstimatingMatches(false);
+        setCachedResults(null, null);
+        setStatus("CONFIRMING");
+
+        const currentSid = useSearchStore.getState().searchId;
+        if (currentSid) {
+          const ctx = useSearchStore.getState().accumulatedContext;
+          const autoTitle = generateSearchTitle(ctx);
+          
+          fetch(`/api/searches/${currentSid}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: autoTitle,
+              status: "CONFIRMING",
+            }),
+          }).catch(() => {});
+
+          window.dispatchEvent(new CustomEvent("searchRename", { detail: { id: currentSid, title: autoTitle } }));
+        }
 
         persistConversation(
           useSearchStore.getState().messages,
@@ -247,7 +235,8 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
       job_titles: "Added titles",
       locations: "Locations",
       search_intent: "Search precision",
-      experience_years: "Experience",
+      experience_min: "Min experience",
+      experience_max: "Max experience",
       seniority: "Seniority",
       industry: "Industry",
       technologies: "Skills",

@@ -78,16 +78,59 @@ function mapSeniorityToCrustData(levels: string[]): string[] {
 }
 
 /**
- * Map CrustData headcount range strings to CrustData `current_employers.company_headcount_range` enum values.
- * CrustData uses same range strings as Prospeo (1-10, 11-50, etc.) — no mapping needed.
+ * Map headcount range strings to CrustData's actual `company_headcount_range` enum values.
+ *
+ * IMPORTANT: CrustData's enum strings differ from Prospeo/legacy values:
+ *   - Uses broader buckets: "11-50" (not "11-20" + "21-50"), "51-200" (not "51-100" + "101-200")
+ *   - Uses comma-formatted large numbers: "501-1,000" (not "501-1000")
+ *
+ * The RANGE_MAP normalises any legacy or AI-generated string to the correct CrustData enum.
  */
 function mapHeadcountToCrustData(ranges: string[]): string[] {
-  // CrustData accepts the same range strings; just normalise to valid values.
-  const VALID = new Set([
-    "1-10", "11-20", "21-50", "51-100", "101-200", "201-500",
-    "501-1000", "1001-2000", "2001-5000", "5001-10000", "10000+"
+  // Actual CrustData enum values (from Set2.md)
+  const CRUSTDATA_HEADCOUNT_VALID = new Set([
+    "Self-employed", "1-10", "11-50", "51-200", "201-500",
+    "501-1,000", "1,001-5,000", "5,001-10,000", "10,001+",
   ]);
-  return ranges.filter(r => VALID.has(r));
+
+  // Normalise legacy / AI-generated strings → correct CrustData enum
+  const RANGE_MAP: Record<string, string> = {
+    // Pass-through valid values
+    "Self-employed":   "Self-employed",
+    "1-10":            "1-10",
+    "11-50":           "11-50",
+    "51-200":          "51-200",
+    "201-500":         "201-500",
+    "501-1,000":       "501-1,000",
+    "1,001-5,000":     "1,001-5,000",
+    "5,001-10,000":    "5,001-10,000",
+    "10,001+":         "10,001+",
+    // Legacy broken ranges (old Prospeo-era strings)
+    "11-20":           "11-50",
+    "21-50":           "11-50",
+    "51-100":          "51-200",
+    "101-200":         "51-200",
+    "501-1000":        "501-1,000",
+    "1001-2000":       "1,001-5,000",
+    "2001-5000":       "1,001-5,000",
+    "5001-10000":      "5,001-10,000",
+    "10000+":          "10,001+",
+    // Common human-readable forms from AI chat
+    "1-50":            "11-50",
+    "50-200":          "51-200",
+    "200-500":         "201-500",
+    "500-1000":        "501-1,000",
+    "1000-5000":       "1,001-5,000",
+    "5000-10000":      "5,001-10,000",
+    "10000":           "10,001+",
+  };
+
+  const mapped = ranges
+    .map(r => RANGE_MAP[r.trim()] ?? (CRUSTDATA_HEADCOUNT_VALID.has(r.trim()) ? r.trim() : null))
+    .filter(Boolean) as string[];
+
+  // Deduplicate (multiple legacy ranges can collapse to the same bucket)
+  return Array.from(new Set(mapped));
 }
 
 // ─── Conceptual Mapping Logic ───────────────────────────────────────────────
