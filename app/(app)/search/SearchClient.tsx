@@ -354,6 +354,10 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
     setSearching(true);
     const finalFilters = localFilters;
 
+    // Minimum result count to show results view. Below this, we return to chat
+    // and let the AI suggest broadening options — avoiding a silent second API call.
+    const LOW_RESULT_THRESHOLD = 10;
+
     try {
       const res = await fetch("/api/search", {
         method: "POST",
@@ -366,13 +370,53 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
           required_skills: (liveContext._resolution as any)?.extraction?.raw_tech ?? [],
           search_industries: (liveContext._resolution as any)?.extraction?.raw_industry ?? [],
           domain_cluster: (liveContext as any).domain_cluster ?? "other",
-          pass_level: passLevelRef.current,
+          pass_level: 1, // Always run a single pass — never auto-escalate
         }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Search failed");
 
+      // Save the search result permanently inside the conversation history
+      // so the FilterSummaryCard never disappears even if the user continues chatting.
+      const store = useSearchStore.getState();
+      const lastMsg = store.messages[store.messages.length - 1];
+      if (lastMsg) {
+        store.updateMessage(lastMsg.id, {
+          isSearchReadyEvent: true,
+          searchTotal: data.total,
+          searchResults: data.results.slice(0, 3) as any,
+          searchFilters: finalFilters as Record<string, unknown>,
+        });
+      }
+
+      // ── Low / zero result recovery ──────────────────────────────────────────
+      // If results are too few to be actionable, go back to chat and let the AI
+      // recommend broadening options. This prevents a silent second 3-credit call.
+      if (data.total <= LOW_RESULT_THRESHOLD) {
+        const ctx = useSearchStore.getState().accumulatedContext;
+        const titleLabel = (ctx.job_titles as string[] | undefined)?.[0] ?? "this role";
+        const locationLabel = (ctx.locations as string[] | undefined)?.[0] ?? "that location";
+        const resultCount = data.total;
+
+        // Build the system message the AI will read (Rule 5 in the system prompt)
+        const systemMsg = `[SEARCH_RESULT: ${resultCount} candidate${resultCount === 1 ? "" : "s"} found for ${titleLabel} in ${locationLabel}]`;
+
+        // Return to chat and inject the system message so the AI responds with broadening chips
+        setIsResultsView(false);
+        setStatus("COLLECTING");
+        hasRunSearchRef.current = false;
+        passLevelRef.current = 1;
+
+        // Small delay so the chat view is mounted before we trigger the message
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent("nexire:inject_search_result", { detail: { message: systemMsg } }));
+        }, 150);
+
+        return;
+      }
+
+      // ── Normal results — show results view ──────────────────────────────────
       setResults(data.results);
       setResultsMeta({ total: data.total, cached: data.fromCache, totalPages: data.total_pages || 1, creditsUsed: data.credits_used });
       setLastCreditsUsed(data.credits_used);
@@ -680,37 +724,31 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
                 ))}
               </div>
             ) : results?.length === 0 ? (
+              // Zero results shown only if the auto-return-to-chat path was bypassed
+              // (e.g. restored from DB history). Normally the low-result path in
+              // handleExecuteSearch auto-returns before we get here.
               <div className="flex flex-col items-center justify-center h-full py-16 px-8 animate-fade-in text-center">
                 <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6">
                   <span className="text-2xl">👀</span>
                 </div>
                 <h2 className="text-lg font-semibold text-gray-900 mb-2">No candidates found</h2>
                 <p className="text-sm text-gray-500 mb-6 max-w-sm">
-                  {passLevelRef.current < 4 
-                    ? "Your search criteria is too specific to find an exact match. We can relax some constraints to find similar candidates." 
-                    : "Even with relaxed criteria, no candidates match. Try removing some filters completely."}
+                  Your filters may be too specific. Go back to chat and I&apos;ll suggest a broader search.
                 </p>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-100/50 mb-8">
                   <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                   <span className="text-xs font-semibold text-emerald-700">0 credits consumed</span>
                 </div>
                 <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
-                  {passLevelRef.current < 4 && (
-                    <button
-                      onClick={() => { passLevelRef.current += 1; setStatus("SEARCHING"); }}
-                      className="px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition shadow-sm w-full"
-                    >
-                      Proceed with Broader Search
-                    </button>
-                  )}
+                  <button
+                    onClick={goBackToChat}
+                    className="px-4 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition shadow-sm w-full"
+                  >
+                    Back to Chat
+                  </button>
                   <button
                     onClick={() => { setIsResultsView(false); handleEditFilters(); }}
-                    className={cn(
-                      "px-4 py-2.5 text-sm font-semibold rounded-lg transition w-full",
-                      passLevelRef.current < 4 
-                        ? "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50" 
-                        : "bg-indigo-600 border border-transparent text-white hover:bg-indigo-700 shadow-sm"
-                    )}
+                    className="px-4 py-2.5 text-sm font-semibold rounded-lg transition w-full bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
                   >
                     Adjust Filters Manually
                   </button>

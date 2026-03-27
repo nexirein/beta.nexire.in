@@ -56,9 +56,28 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
   void selectedCandidate;
   void drawerOpen;
 
+  // Stable ref so the search-result-inject event listener always calls the latest
+  // version of handleSendMessage without stale closure issues.
+  const handleSendMessageRef = useRef<((content: string, widgetAnswers?: Record<string, string[]>, isSystemMsg?: boolean, displayContent?: string) => void) | null>(null);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, status, retryCount]);
+
+  // ── Listen for low-result inject from SearchClient ─────────────────────────
+  // When a search returns ≤10 results, SearchClient goes back to chat and
+  // dispatches this event so the AI can suggest broader options (Rule 5).
+  // Uses a ref so it always has the latest handleSendMessage (no stale closure).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const msg = (e as CustomEvent<{ message: string }>).detail?.message;
+      if (!msg || !handleSendMessageRef.current) return;
+      handleSendMessageRef.current(msg, undefined, true);
+    };
+    window.addEventListener("nexire:inject_search_result", handler);
+    return () => window.removeEventListener("nexire:inject_search_result", handler);
+  }, []);
+
 
   const persistConversation = useCallback(async (
     msgs: typeof messages,
@@ -77,14 +96,18 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
     }).catch(() => {});
   }, [searchId]);
 
-  const handleSendMessage = async (content: string, widgetAnswers?: Record<string, string[]>, isSystemMsg: boolean = false) => {
+  const handleSendMessage = async (content: string, widgetAnswers?: Record<string, string[]>, isSystemMsg: boolean = false, displayContent?: string) => {
+    // Keep ref current so the search-result event listener always calls the latest version
+    handleSendMessageRef.current = handleSendMessage;
+
     if (content && messages.length === 0 && onFirstMessage && !isSystemMsg) {
       onFirstMessage(content).catch(() => {});
     }
 
-    // Filter out any search_mode metadata messages from appearing in chat
+    // Use displayContent for the chat bubble (human-readable) but send content (may include [WIDGET_SELECTION]) to API
+    const bubbleContent = displayContent || content;
     const isMetaMessage = content.startsWith("[SYSTEM]") || content.startsWith("search_mode:");
-    if (content && !isSystemMsg && !isMetaMessage) addMessage({ role: "user", content });
+    if (content && !isSystemMsg && !isMetaMessage) addMessage({ role: "user", content: bubbleContent });
 
     let newContext: AccumulatedContext = { ...accumulatedContext };
     if (widgetAnswers) {
@@ -218,14 +241,98 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
       handleSendMessage("Auto-fill: Nexire AI picks the best options and searches now.");
       return;
     }
-    const textParts = Object.entries(answers)
+
+    // Map widget field keys to human-readable labels for the chat bubble display
+    const fieldLabels: Record<string, string> = {
+      job_titles: "Added titles",
+      locations: "Locations",
+      search_intent: "Search precision",
+      experience_years: "Experience",
+      seniority: "Seniority",
+      industry: "Industry",
+      technologies: "Skills",
+      schools: "Education",
+      company_headcount_range: "Company size",
+    };
+
+    // Build display string for the user bubble (clean, human-readable)
+    const displayParts = Object.entries(answers)
       .filter(([, vals]) => vals.length > 0)
-      .map(([key, vals]) => `${key}: ${vals.join(", ")}`);
-    handleSendMessage(textParts.join("; "), answers);
+      .map(([key, vals]) => `${fieldLabels[key] || key}: ${vals.join(", ")}`);
+
+    // Build the actual message sent to the LLM.
+    // [WIDGET_SELECTION] prefix signals the server to NEVER use replace_ flags —
+    // these are always additions to existing context, never replacements.
+    // This is the root fix for the "custom value disappears" bug.
+    const llmMessage = `[WIDGET_SELECTION] ${displayParts.join("; ")}`;
+
+    handleSendMessage(llmMessage, answers, false, displayParts.join(" · "));
   };
 
   const onWidgetSkip = () => {
-    handleSendMessage("Skip suggestions — search now with current criteria.");
+    // Bypass the LLM entirely — the user wants to search with only what they stated.
+    // Calling the chat API here risks the LLM injecting its own similar_job_titles
+    // (e.g. "Logistics Manager" when user asked for "Fleet Manager").
+    const currentContext = { ...useSearchStore.getState().accumulatedContext };
+
+    addMessage({ role: "assistant", content: "Running search with your current criteria." });
+    setEstimatedMatches(null);
+    updateAccumulatedContext({ _resolvedFilters: undefined, _resolution: undefined });
+    setIsResolvingFilters(true);
+    setIsEstimatingMatches(false);
+    setCachedResults(null, null);
+    setStatus("CONFIRMING");
+
+    (async () => {
+      try {
+        const resolveRes = await fetch("/api/ai/context-to-filters", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accumulatedContext: currentContext, skipExpansion: true }),
+        });
+        const resolvedData = await resolveRes.json();
+
+        if (!resolveRes.ok || !resolvedData.filters) {
+          setIsResolvingFilters(false);
+          return;
+        }
+
+        useSearchStore.getState().updateAccumulatedContext({
+          _resolvedFilters: resolvedData.filters,
+          _resolution: resolvedData.resolution,
+          requirement_summary: resolvedData.requirementSummary || null,
+        });
+        setIsResolvingFilters(false);
+        setIsEstimatingMatches(false);
+
+        const currentSid = useSearchStore.getState().searchId;
+        if (currentSid) {
+          const ctx = useSearchStore.getState().accumulatedContext;
+          const autoTitle = generateSearchTitle(ctx);
+          await fetch(`/api/searches/${currentSid}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: autoTitle,
+              prospeo_filters: resolvedData.filters,
+              estimated_matches: null,
+              status: "CONFIRMING",
+            }),
+          }).catch(() => {});
+          window.dispatchEvent(new CustomEvent("searchRename", { detail: { id: currentSid, title: autoTitle } }));
+        }
+
+        persistConversation(
+          useSearchStore.getState().messages,
+          useSearchStore.getState().accumulatedContext,
+          "CONFIRMING"
+        );
+      } catch (e) {
+        console.error("Skip filter resolution failed", e);
+        setIsResolvingFilters(false);
+        setIsEstimatingMatches(false);
+      }
+    })();
   };
 
   const handleRetry = () => {
@@ -391,6 +498,23 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
                 {[0, 0.2, 0.4].map((delay, i) => (
                   <div key={i} className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: `${delay}s` }} />
                 ))}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── Filter Extraction Progress ── */}
+          {status === "CONFIRMING" && useSearchStore.getState().isResolvingFilters && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex gap-3 items-center"
+            >
+              <div className="w-8 h-8 rounded-full bg-brand-50 border border-brand-100 flex items-center justify-center shrink-0">
+                <span className="text-[10px] font-bold text-brand-500">AI</span>
+              </div>
+              <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl rounded-tl-sm bg-white border border-brand-100 shadow-sm">
+                <div className="w-3 h-3 border-2 border-brand-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                <span className="text-[13px] text-gray-500">Understanding your criteria...</span>
               </div>
             </motion.div>
           )}

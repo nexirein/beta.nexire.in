@@ -34,7 +34,16 @@ function getAuthClient() {
   );
 }
 
-export async function completeOnboarding(orgName: string, jobTitle: string) {
+function isLowQualityUser(companySize: string, hiringVolume: string): boolean {
+  return companySize === "1-10" && hiringVolume === "1-5/mo";
+}
+
+export async function completeOnboarding(
+  orgName: string,
+  jobTitle: string,
+  companySize: string = "",
+  hiringVolume: string = ""
+) {
   // 1. Get the current authenticated user
   const authClient = getAuthClient();
   const {
@@ -89,6 +98,9 @@ export async function completeOnboarding(orgName: string, jobTitle: string) {
         "User",
       avatar_url: user.user_metadata?.avatar_url ?? null,
       job_title: jobTitle.trim(),
+      company_size: companySize,
+      hiring_volume: hiringVolume,
+      onboarding_status: isLowQualityUser(companySize, hiringVolume) ? "waitlisted" : "active",
     });
 
     if (profileCreateErr) {
@@ -110,7 +122,12 @@ export async function completeOnboarding(orgName: string, jobTitle: string) {
 
     const { error: profileUpdateErr } = await admin
       .from("profiles")
-      .update({ job_title: jobTitle.trim() })
+      .update({
+        job_title: jobTitle.trim(),
+        company_size: companySize,
+        hiring_volume: hiringVolume,
+        onboarding_status: isLowQualityUser(companySize, hiringVolume) ? "waitlisted" : "active",
+      })
       .eq("id", user.id);
 
     if (profileUpdateErr) {
@@ -147,5 +164,9 @@ export async function completeOnboarding(orgName: string, jobTitle: string) {
     projectIdToReturn = newProject.id;
   }
 
-  return { success: true, projectId: projectIdToReturn };
+  return {
+    success: true,
+    projectId: projectIdToReturn,
+    waitlisted: isLowQualityUser(companySize, hiringVolume),
+  };
 }

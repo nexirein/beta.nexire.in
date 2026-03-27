@@ -15,19 +15,17 @@ import type { CrustDataFilterState, CrustDataFilterNode } from "@/lib/crustdata/
 // ─── Input from context-to-filters route ──────────────────────────────────────
 export interface CrustDataAssemblerInput {
   extracted: LLMExtractedFilters;
-  /** CrustData autocomplete-resolved job titles (from `/api/suggestions?source=crustdata&field=title`) */
   resolvedTitles: string[];
-  /** CrustData autocomplete-resolved region strings (from `/api/suggestions?source=crustdata&field=region`) */
   resolvedRegions: string[];
-  /**
-   * Set2 vector-resolved industry values (canonical CrustData strings).
-   * If provided, bypasses the static resolveCrustDataIndustries() map.
-   */
   resolvedIndustries?: string[];
-  /** Radius in miles to use for geo_distance filter (default: 30) */
   radiusMiles?: number;
-  /** Boolean search expression (preserved for CrustData `current_employers.title` field if strategy=boolean) */
   booleanSearchExpression?: string | null;
+  /**
+   * Titles the user explicitly stated (from accumulatedContext.job_titles).
+   * These are always pinned at position 0-N in filterState.titles,
+   * regardless of what CrustData autocomplete returns.
+   */
+  userTitles?: string[];
 }
 
 // ─── Output mirrors the existing assembleProspeoFilters interface ──────────────
@@ -160,20 +158,36 @@ export function assembleCrustDataFilters(input: CrustDataAssemblerInput): CrustD
     resolvedRegions,
     radiusMiles = 30,
     booleanSearchExpression,
+    userTitles = [],
   } = input;
 
   // ── 1. Build CrustDataFilterState from extracted signals ────────────────────
   const filterState: CrustDataFilterState = {};
 
-  // Job titles: prefer CrustData autocomplete resolved → merge with LLM extracted
-  // Cap at 8 titles — too many synonyms dilute results (e.g. "Operations Manager" matches everyone)
-  // Core rule: put the most specific/primary titles first, generics last.
-  const coreTitles = resolvedTitles.filter(Boolean);
-  const extraTitles = [
-    ...(extracted.raw_job_titles ?? []),
-    ...(extracted.similar_job_titles ?? []),
-  ].filter(t => !coreTitles.includes(t));
-  const allTitles = Array.from(new Set([...coreTitles, ...extraTitles])).slice(0, 8);
+  // Job titles: user's explicit titles ALWAYS come first (pinned).
+  // CrustData autocomplete results follow. We only fall back to LLM's
+  // similar_job_titles when autocomplete gave us very few results.
+  const pinnedTitles = userTitles.filter(Boolean);
+  const coreTitles = resolvedTitles.filter(
+    t => !pinnedTitles.some(p => p.toLowerCase() === t.toLowerCase())
+  );
+  // Only add LLM similar_job_titles as a fallback when autocomplete returned fewer than 3 results.
+  // This prevents "Logistics Manager" from appearing when user only asked for "Fleet Manager".
+  const hasEnoughResolved = (pinnedTitles.length + coreTitles.length) >= 3;
+  const extraTitles = hasEnoughResolved
+    ? []
+    : [
+        ...(extracted.raw_job_titles ?? []),
+        ...(extracted.similar_job_titles ?? []),
+      ].filter(t =>
+        !pinnedTitles.some(p => p.toLowerCase() === t.toLowerCase()) &&
+        !coreTitles.some(c => c.toLowerCase() === t.toLowerCase())
+      );
+  const allTitles = Array.from(new Set([
+    ...pinnedTitles,  // user's explicit titles — always first
+    ...coreTitles,    // CrustData autocomplete results
+    ...extraTitles,   // LLM fallback only when we have too few
+  ])).slice(0, 8);
 
   // STRATEGY ENFORCEMENT: Filter-First
   // If we have specific job titles, use them and IGNORE boolean expression to prevent over-constraining.
@@ -201,12 +215,11 @@ export function assembleCrustDataFilters(input: CrustDataAssemblerInput): CrustD
     filterState.radius_miles = radiusMiles;
   }
 
-  // Recruiter Intuition Rule (Experience)
-  // If experience_min is provided, we apply a -2 year buffer (capped at 0)
-  // to broaden the search and avoid excluding highly qualified but "slightly under-exp" talent.
+  // Experience: use the value the user specified verbatim.
+  // "3+ years" → search for 3+ years, not 1+ years. Surprising the user with
+  // a lower bar than they asked for erodes trust and produces irrelevant results.
   if (extracted.raw_experience_min !== null && extracted.raw_experience_min !== undefined) {
-    const experienceMin = Math.max(0, extracted.raw_experience_min - 2);
-    filterState.experience_min = experienceMin;
+    filterState.experience_min = extracted.raw_experience_min;
   }
   
   // We generally drop experience_max unless it's strictly required

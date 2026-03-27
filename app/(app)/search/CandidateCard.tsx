@@ -309,7 +309,7 @@ export function CandidateCard({ candidate, onReveal, onSequenceEnroll }: Candida
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-1.5 rounded-lg hover:bg-[var(--surface-raised)] text-[var(--muted)] hover:text-brand-400 transition-colors"
-                  title="Open LinkedIn profile"
+                  title="Open professional profile"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>

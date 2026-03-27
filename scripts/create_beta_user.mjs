@@ -14,7 +14,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-async function setupUser(email, password, fullName, credits = 30) {
+async function setupUser(email, password, fullName, credits = 30, orgOverride = null) {
   console.log(`\n--- Setting up Beta User: ${email} ---`);
 
   // 1. Create or ensure user exists in auth.users
@@ -28,6 +28,10 @@ async function setupUser(email, password, fullName, credits = 30) {
       email,
       password,
       email_confirm: true,
+      user_metadata: {
+        full_name: fullName,
+        org_name: orgName
+      }
     });
     if (createError) throw createError;
     user = createData.user;
@@ -40,7 +44,7 @@ async function setupUser(email, password, fullName, credits = 30) {
   // 2. Ensure they have an Org
   console.log("Checking for organization...");
   let orgId;
-  const orgName = "Truckinzy Recruitment Beta";
+  const orgName = orgOverride || "Truckinzy Recruitment Beta";
   const { data: orgData } = await supabase.from("orgs").select("id").eq("name", orgName).limit(1).maybeSingle();
 
   if (orgData) {
@@ -73,17 +77,57 @@ async function setupUser(email, password, fullName, credits = 30) {
     });
   }
 
+  // 4. Ensure at least one project exists (so they land on search immediately)
+  console.log("Ensuring at least one project exists...");
+  const { data: projects } = await supabase.from("projects").select("id").eq("org_id", orgId).limit(1);
+  if (!projects || projects.length === 0) {
+    console.log("Creating 'First Project'...");
+    await supabase.from("projects").insert({
+      org_id: orgId,
+      title: "First Project",
+      status: "active"
+    });
+  }
+
   console.log(`SUCCESS: ${email} is ready.`);
 }
 
 async function main() {
   const users = [
-    { email: "chanchal@truckinzy.com", password: "password123", name: "Chanchal" },
-    { email: "rk@truckinzy.com", password: "password123", name: "Rachit" }
+    { 
+      email: "sarah.jenkins@nexire.test", 
+      password: "NexireTest2026!", 
+      name: "Sarah Jenkins", 
+      org: "Nexus Tech Solutions Beta" 
+    },
+    { 
+      email: "david.miller@nexire.test", 
+      password: "NexireTest2026!", 
+      name: "David Miller", 
+      org: "Apex Financial Group Beta" 
+    },
+    { 
+      email: "elena.rodriguez@nexire.test", 
+      password: "NexireTest2026!", 
+      name: "Elena Rodriguez", 
+      org: "Horizon Healthcare Beta" 
+    },
+    { 
+      email: "james.chen@nexire.test", 
+      password: "NexireTest2026!", 
+      name: "James Chen", 
+      org: "Peak Retail Ventures Beta" 
+    },
+    { 
+      email: "amara.okafor@nexire.test", 
+      password: "NexireTest2026!", 
+      name: "Amara Okafor", 
+      org: "Steel Core Manufacturing Beta" 
+    }
   ];
 
   for (const u of users) {
-    await setupUser(u.email, u.password, u.name);
+    await setupUser(u.email, u.password, u.name, 15, u.org);
   }
 
   console.log("\n=== ALL USERS PROVISIONED ===");

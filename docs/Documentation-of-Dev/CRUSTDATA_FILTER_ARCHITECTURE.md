@@ -1,82 +1,49 @@
 # CrustData Filter Architecture & Best Practices
 
 ## The Problem: The "Over-Constrained Search" Trap
-When Nexire's AI attempts to convert a detailed job description (like "Regional Manager – Operations (Car Carrier Logistics) with 10+ years exp") into a CrustData JSON payload, it often hallucinates or over-constrains the query.
+When Nexire's AI attempts to convert hiring intent into a CrustData JSON payload, it often over-constrains the query, leading to zero results.
 
-**Example of a failing payload:**
-1. **Title Double-Filtering:** Applying an `OR` block of 17 exact titles (`(.)`) **AND** a complex regular expression block (`[.]`) on the same `current_employers.title` field. This creates mathematically impossible intersections (e.g., a candidate has an exact title of "Logistics Manager", but fails the regex requirement to have "Regional" in the title).
-2. **Taxonomy Hallucination:** Passing non-standard industries like `"Automobile Logistics"` to `current_employers.company_industries`. CrustData relies on the standardized LinkedIn industry taxonomy. Hallucinated industries cause queries to return zero results.
-3. **Redundant Constraints:** Enforcing `years_of_experience_raw >= 10` **AND** `seniority_level IN ["Senior", "Manager", "Head"]`. A highly experienced candidate might have a non-standard seniority title, causing them to be falsely excluded.
+**Common failures:**
+1. **Conflicting Operators:** Applying both `in` (exact set) and `(.)` (fuzzy contains) to the same title field.
+2. **Taxonomy Hallucination:** Passing non-standard industries.
+3. **Redundant Constraints:** Enforcing both seniority level AND experience years.
 
 ---
 
 ## Core Architectural Principles for CrustData
 
-To get highly relevant candidates without hitting "0 matches", the architecture must enforce **Safe, Expansive, and Layered** filtering.
-
 ### 1. The "One Strategy Per Field" Rule
-Never apply conflicting operators to the same column in a single pass.
-- **For Job Titles:** Choose **either** a list of Exact Matches `(.)` combined with `OR`, **OR** a broad Regex pattern `[.]`. Never `AND` them together.
-- **Recommendation:** Use a smart regex array OR a strictly validated list of titles. 
+Nexire uses a **fuzzy contains OR** strategy for titles. We resolve 3-8 LinkedIn-native titles via autocomplete and combine them into an `OR` block of `(.)` filters.
 
-### 2. Strict Taxonomy Enforcement (The "No Hallucination" Rule)
-AI models cannot guess CrustData's internal enums. 
-- **Industries:** The AI must map user intent (e.g., "Car Carrier") to a predefined, hardcoded list of **Valid LinkedIn Industries** (e.g., `"Transportation, Logistics, Supply Chain and Storage"`, `"Truck Transportation"`).
-- **Regions:** `geo_distance` works best with major metropolitan centers. Ensure the AI resolves "Bangalore Rural" to the primary geocodable hub: `"Bengaluru, Karnataka, India"`.
+### 2. Intent-Controlled Title Expansion
+The number of titles used is determined by the user's **Search Intent**:
+- **🎯 Tight (Sniper)**: 3 titles max.
+- **🔄 Balanced**: 5 titles max.
+- **🌐 Wide**: 8 titles max.
 
-### 3. The "Recruiter Intuition" Relaxation (Less is More)
-Do not use every extracted field in the initial query. 
-- If `years_of_experience` is provided, drop `seniority_level`. Let the experience dictate the seniority.
-- Use `skills` (if supported by CrustData) as a soft matcher rather than a hard `AND` filter, or rely on title/industry to imply skills.
+### 3. India-Optimized Geo Logic (The "Radius Simulator")
+CrustData's `geo_distance` works best with canonical region strings.
+- **Geocoding**: We resolve "Vadodara" to "Vadodara Taluka, Gujarat, India".
+- **Dual Match**:
+  - `geo_distance`: Radius search (e.g., 30mi) for coordinate-based hits.
+  - `fuzzy text`: Fuzzy `(.)` match on the clean city name ("Vadodara") and the full admin name ("Vadodara Taluka") to catch profiles with varying text formats.
 
----
-
-## The "CrustData Waterfall" Strategy
-
-Instead of sending one massive, over-constrained payload, the system must execute searches in a prioritized **Waterfall**. If Pass 1 returns < 10 results, automatically proceed to Pass 2.
-
-### Pass 1: The Precision Strike (High Intent)
-- **Title:** Array of specific, high-probability titles using `OR` logic.
-- **Location:** `geo_distance` (e.g., 50 miles).
-- **Industry:** Strictly mapped standard industries.
-- **Experience:** Floor set to User Request minus 2 years (e.g., if 10+, set to 8+).
-
-### Pass 2: The Title Flex (Broaden Role)
-- **Title:** Broad regex match (e.g., `(?i).*(operations|logistics).*(manager|head).*`).
-- **Location:** `geo_distance` (same).
-- **Industry:** Strictly mapped standard industries.
-- **Experience:** Same as Pass 1.
-*(Removed: The strict exact title list).*
-
-### Pass 3: The Industry/Geo Flex (Broaden Scope)
-- **Title:** Broad regex match.
-- **Location:** Relax to State/Country level (e.g., "Karnataka, India").
-- **Industry:** Removed completely (rely on title).
-- **Experience:** Floor dropped significantly.
+### 4. Recruiter Intuition (The Experience Floor)
+We use the user's requested experience verbatim (e.g., "3+ years" -> `experience_min: 3`). We do not apply an experience maximum unless explicitly requested ("no more than 5 years"), as real recruiters prefer keeping the funnel open for slightly more senior candidates.
 
 ---
 
-## Implementation Guidelines for the Filter Assembler
+## Implementation Guidelines
 
-1. **Clean the AI Output:** Before building the JSON, run a sanitization function that strips any industry not present in `valid_linkedin_industries.json`.
-2. **Flatten the Boolean Logic:** Keep the JSON tree as flat as possible.
-   ```json
-   {
-     "filters": {
-       "op": "and",
-       "conditions": [
-         {
-           "column": "current_employers.title",
-           "type": "in",
-           "value": ["Regional Operations Manager", "Logistics Manager"]
-         },
-         {
-           "column": "region",
-           "type": "geo_distance",
-           "value": { "location": "Bengaluru, Karnataka, India", "distance": 50, "unit": "mi" }
-         }
-       ]
-     }
-   }
-   ```
-3. **Stop Regex Abuse:** If using regex for titles, use a single `[.]` condition with a combined pattern, rather than multiple nested `AND` regexes which break easily.
+### 1. The Filter Assembler (`lib/ai/filter-assembler.ts`)
+- **Sanitize**: Strip any industries or seniority levels not present in the standardized taxonomy.
+- **Flatten**: Keep the JSON tree as flat as possible (usually a single `AND` containing several `OR` sub-blocks).
+
+### 2. The Filter Builder (`lib/crustdata/filter-builder.ts`)
+- **Fuzzy Titles**: Always use `(.)` with `OR` for titles to catch "Backend Developer" vs "Backend Engineer".
+- **Location Guard**: When searching in India, pin `location_country IN ["India"]` to prevent noise from international cities with similar names.
+
+### 3. Client-Side Ranking (The Scoring Layer)
+Because CrustData's internal scoring is a black box, Nexire applies a **deterministic client-side ranking engine** (`lib/ai/scorer.ts`) on the results returned. 
+- Score is calculated from 1-99 based on Title, Skills, Domain, Location, and Experience proximity.
+- Results are tagged: **Excellent**, **Strong**, **Good**, or **Potential**.

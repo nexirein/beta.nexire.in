@@ -1,39 +1,48 @@
 # Nexire AI Search Architecture
 
-Nexire AI uses a sophisticated multi-stage pipeline to transform natural language recruitment requirements into high-precision candidate search filters for the CrustData PersonDB.
+Nexire AI uses a sophisticated multi-stage pipeline to transform natural language recruitment requirements into high-precision candidate search filters for the **CrustData PersonDB**.
 
 ## 1. Requirement Extraction & Transformation Pipeline
 
-The core engine follows a "Waterfall" strategy to ensure high recall without sacrificing precision.
+The core engine follows a deterministic, intent-driven strategy to ensure high recall without sacrificing precision.
 
 ### Phase 1: AI Chat & Context Accumulation
 - **Nexire Bot**: A consultative AI persona that extracts job titles, locations, skills, and seniority from chat.
 - **Context Accumulation**: Maintains a persistent state of the "ideal candidate profile" across the conversation.
-- **Widget System**: Proactively suggests title expansions and location clusters.
+- **Progressive Widget System**: Mandatory **Search Intent Selector** (Tight, Balanced, Wide) determines the title expansion strategy.
 
 ### Phase 2: Filter Resolution (3-Tier Strategy)
 To ensure values match the CrustData/LinkedIn taxonomy exactly, extracted terms are routed through three paths:
 
-1.  **Set 1 (Autocomplete API)**: Job Titles and Regions call the CrustData Realtime Autocomplete API to fetch canonical LinkedIn strings.
-2.  **Set 2 (Vector Search)**: Enums like **Industry**, **Seniority**, and **Function** are resolved via semantic search.
-    -   **Model**: Gemini Embedding 2 (768-dim via Matryoshka Representation Learning).
-    -   **Storage**: Supabase `pgvector` index in `filter_embeddings` table.
-3.  **Set 3 (Direct Passthrough)**: Keywords and Boolean flags (e.g., `recently_changed_jobs`) are applied directly.
+1.  **Path A (Autocomplete API)**: Job Titles and Regions call the CrustData Realtime Autocomplete API to fetch canonical strings (e.g., "Vadodara" → "Vadodara Taluka, Gujarat, India").
+2.  **Path B (Vector Search)**: Industries and Technologies are resolved via semantic search in Supabase `pgvector`.
+3.  **Path C (Direct Mapping)**: Seniority, Headcount, and Company Type are mapped using predefined whitelists.
 
-### Phase 3: The Waterfall Search Engine
-If a strict search returns zero results, the engine automatically relaxes constraints in order:
-- **Pass 1 (Sniper)**: Exact titles + Exact regions + Industries.
-- **Pass 2 (Expansion)**: Adds similar job titles from Autocomplete.
-- **Pass 3 (Regional)**: Expands location to a 30-50 mile radius.
-- **Pass 4 (Broad)**: Relaxes industry and seniority constraints.
+### Phase 3: The Intent-Controlled Search Engine
+Instead of an automated waterfall, Nexire puts the recruiter in control:
+- **Tight (Sniper)**: 3 titles max. Exact match primary title.
+- **Balanced**: 5 titles max. Includes synonyms.
+- **Wide**: 8 titles max. Casts a broad net across adjacent roles.
+- **Radius Simulator**: Always applies a 30-mile `geo_distance` radius search + clean city fuzzy text match for maximum location recall.
 
-## 2. Data Storage & Persistence
+---
 
--   **Supabase `people` table**: Stores all fetched profiles. Schema is synced with CrustData PersonDB for zero-loss data storage.
--   **Vector Store**: Stores semantic embeddings for all ~430 LinkedIn industries to enable "Logistics" → "Transportation, Logistics, Supply Chain and Storage" resolution.
+## 2. Client-Side Ranking & Scoring
+
+Nexire does not rely on a black-box API score. After CrustData returns profiles, they are ranked client-side using a **deterministic scoring engine** (`lib/ai/scorer.ts`):
+- **Title (30 pts)**: Exact > Partial > Adjacent match.
+- **Skills (25 pts)**: Profile-level skills vs. requirements.
+- **Domain (20 pts)**: Industry match / penalty for cross-domain.
+- **Location (15 pts)**: Proximity to target city.
+- **Experience (10 pts)**: Proximity to requested years floor.
+
+Candidates are labeled: **Excellent**, **Strong**, **Good**, or **Potential**.
+
+---
 
 ## 3. UI/UX Design Principles
 
--   **Candidate Profile Panel**: A single-page, scrollable UX with sticky navigation and scrollspy.
--   **Logo.dev Integration**: Automated fetching of company logos using domain-based resolution.
--   **Search Terminal**: Professional HR-grade terminal for iterative refinement.
+-   **Professional Profile View**: Minimalist, typography-led interface avoiding brand specificities (Profile vs. LinkedIn).
+-   **Match % Badges**: Visual indicators of candidate relevance based on the scoring engine.
+-   **SearchTerminal**: HR-grade iterative chat for professional refinement.
+-   **FilterSummaryCard**: Displays canonical filter state with short labels and detailed tooltips.

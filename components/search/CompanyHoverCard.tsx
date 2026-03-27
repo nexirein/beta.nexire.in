@@ -119,7 +119,7 @@ export function CompanyHoverCard({
           target="_blank" rel="noopener noreferrer" 
           onClick={(e) => e.stopPropagation()}
           className="block flex-shrink-0 transition-transform duration-200 hover:scale-110 hover:shadow-md rounded-lg"
-          title={`View ${companyName} on LinkedIn`}
+          title={`View ${companyName} on professional network`}
         >
           <CompanyLogo domain={domain} name={companyName} />
         </a>
@@ -180,7 +180,7 @@ export function CompanyHoverCard({
           onClick={(e) => e.stopPropagation()}
           className="flex items-center gap-1.5 text-[11.5px] font-bold text-[#0A66C2] hover:text-[#004182] hover:underline transition-colors"
         >
-          <LinkedInSVGMini /> LinkedIn
+          <LinkedInSVGMini /> Profile
         </a>
       </div>
     </motion.div>

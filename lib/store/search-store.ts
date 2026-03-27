@@ -25,6 +25,7 @@ export interface AccumulatedContext {
   exclude_job_titles?: string[];
   selected_filter_dimensions?: string[];
   search_mode?: "sniper" | "title_flex" | "location_flex" | "wide" | null;
+  search_intent?: "tight" | "balanced" | "wide" | null;
   domain_cluster?: string;
   requirement_summary?: string | null;
   _resolvedFilters?: Record<string, unknown>;

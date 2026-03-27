@@ -293,30 +293,38 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
     // Build all per-region location conditions
     const locationConditions: CrustDataFilterTree[] = [];
 
+    // Strip administrative suffixes like "Taluka", "District", "Division", "Tehsil"
+    // so "Vadodara Taluka, Gujarat, India" → clean city = "Vadodara"
+    const ADMIN_SUFFIX_RE = /\s+(taluka|district|tehsil|division|municipality|cantonment|township|block|mandal|nagar|rural)\b.*/i;
+    const cleanCityName = (raw: string) => {
+      const part = raw.split(",")[0].trim();
+      return part.replace(ADMIN_SUFFIX_RE, "").trim();
+    };
+
     // TEXT matching — reliable for ALL markets, especially India
-    // Dedupe: only add text conditions for unique city names (not repeated geo aliases)
+    // Add both the raw first segment AND the clean city name (e.g. "Vadodara Taluka" AND "Vadodara")
     const addedCities = new Set<string>();
     for (const loc of regionsToSearch) {
-      const city = loc.split(",")[0].trim();
-      if (!addedCities.has(city.toLowerCase())) {
-        addedCities.add(city.toLowerCase());
-        // region is a free-text field like "Ghaziabad, Uttar Pradesh, India"
-        locationConditions.push(simpleFilter("region", "(.)", city));
-        // region_address_components is an array — (.) checks if any element contains the city
-        locationConditions.push(simpleFilter("region_address_components", "(.)", city));
+      const rawCity = loc.split(",")[0].trim();
+      const cleanCity = cleanCityName(loc);
+      const citiesToAdd = Array.from(new Set([rawCity, cleanCity].filter(Boolean)));
+      for (const city of citiesToAdd) {
+        if (!addedCities.has(city.toLowerCase())) {
+          addedCities.add(city.toLowerCase());
+          locationConditions.push(simpleFilter("region", "(.)", city));
+          locationConditions.push(simpleFilter("region_address_components", "(.)", city));
+        }
       }
     }
 
-    // GEO_DISTANCE — coordinates-based, good supplement for Western cities
-    // For India (where geo coordinates are often imprecise), only add if radius >= 50mi
-    // to avoid cutting out profiles that just say "Delhi NCR" instead of exact coords.
-    if (!allIndia || radiusMiles >= 50) {
-      locationConditions.push(simpleFilter("region", "geo_distance", {
-        location: primaryRegion,
-        distance: radiusMiles,
-        unit: "mi",
-      }));
-    }
+    // GEO_DISTANCE — always include for radius-based search accuracy.
+    // Uses the fully-resolved location string (e.g. "Vadodara Taluka, Gujarat, India")
+    // which geocodes precisely and finds candidates within the specified radius.
+    locationConditions.push(simpleFilter("region", "geo_distance", {
+      location: primaryRegion,
+      distance: radiusMiles,
+      unit: "mi",
+    }));
 
     conditions.push(locationConditions.length === 1 ? locationConditions[0] : or(locationConditions));
 

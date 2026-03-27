@@ -22,6 +22,8 @@ function LoginForm() {
   const [reqName, setReqName] = useState("");
   const [reqEmail, setReqEmail] = useState("");
   const [reqMobile, setReqMobile] = useState("");
+  const [reqCompany, setReqCompany] = useState("");
+  const [reqRole, setReqRole] = useState("");
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +57,7 @@ function LoginForm() {
 
   async function handleRequestCredentials(e: React.FormEvent) {
     e.preventDefault();
-    if (!reqName.trim() || !reqEmail.trim() || !reqMobile.trim()) return;
+    if (!reqName.trim() || !reqEmail.trim() || !reqMobile.trim() || !reqCompany.trim() || !reqRole.trim()) return;
 
     setLoading(true);
     setError(null);
@@ -75,14 +77,17 @@ function LoginForm() {
           name: reqName,
           email: reqEmail,
           mobile: reqMobile,
+          company: reqCompany,
+          role: reqRole,
         }),
       });
       
-      // no-cors returns opaque response, assume success if no network error
       setSuccess(true);
       setReqName("");
       setReqEmail("");
       setReqMobile("");
+      setReqCompany("");
+      setReqRole("");
     } catch (err: any) {
       setError(err.message || "Failed to submit request.");
     } finally {
@@ -174,46 +179,85 @@ function LoginForm() {
                 </>
               ) : (
                 <>
+                  {/* Row 1: Name + Email */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="reqName" className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Full Name
+                      </label>
+                      <input
+                        id="reqName"
+                        type="text"
+                        value={reqName}
+                        onChange={(e) => setReqName(e.target.value)}
+                        placeholder="John Doe"
+                        required
+                        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="reqEmail" className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Email Address
+                      </label>
+                      <input
+                        id="reqEmail"
+                        type="email"
+                        value={reqEmail}
+                        onChange={(e) => setReqEmail(e.target.value)}
+                        placeholder="john@company.com"
+                        required
+                        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
+                        disabled={loading}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 2: Mobile + Company */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="reqMobile" className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Mobile Number
+                      </label>
+                      <input
+                        id="reqMobile"
+                        type="tel"
+                        value={reqMobile}
+                        onChange={(e) => setReqMobile(e.target.value)}
+                        placeholder="+91 98765 43210"
+                        required
+                        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
+                        disabled={loading}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="reqCompany" className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Company Name
+                      </label>
+                      <input
+                        id="reqCompany"
+                        type="text"
+                        value={reqCompany}
+                        onChange={(e) => setReqCompany(e.target.value)}
+                        placeholder="Acme Corp"
+                        required
+                        className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
+                        disabled={loading}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 3: Role (full width) */}
                   <div>
-                    <label htmlFor="reqName" className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Full Name
+                    <label htmlFor="reqRole" className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Your Role
                     </label>
                     <input
-                      id="reqName"
+                      id="reqRole"
                       type="text"
-                      value={reqName}
-                      onChange={(e) => setReqName(e.target.value)}
-                      placeholder="John Doe"
-                      required
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
-                      disabled={loading}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="reqEmail" className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Work Email
-                    </label>
-                    <input
-                      id="reqEmail"
-                      type="email"
-                      value={reqEmail}
-                      onChange={(e) => setReqEmail(e.target.value)}
-                      placeholder="john@company.com"
-                      required
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
-                      disabled={loading}
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="reqMobile" className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Mobile Number
-                    </label>
-                    <input
-                      id="reqMobile"
-                      type="tel"
-                      value={reqMobile}
-                      onChange={(e) => setReqMobile(e.target.value)}
-                      placeholder="+1 (555) 000-0000"
+                      value={reqRole}
+                      onChange={(e) => setReqRole(e.target.value)}
+                      placeholder="e.g. Talent Acquisition Lead, CHRO, Founder"
                       required
                       className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all shadow-sm"
                       disabled={loading}
@@ -224,7 +268,7 @@ function LoginForm() {
 
               <button
                 type="submit"
-                disabled={loading || (isLogin ? (!email.trim() || !password) : (!reqName.trim() || !reqEmail.trim() || !reqMobile.trim()))}
+                disabled={loading || (isLogin ? (!email.trim() || !password) : (!reqName.trim() || !reqEmail.trim() || !reqMobile.trim() || !reqCompany.trim() || !reqRole.trim()))}
                 className="w-full rounded-xl bg-brand-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 transition-all hover:bg-brand-700 disabled:opacity-70 flex justify-center items-center mt-2"
               >
                 {loading ? (

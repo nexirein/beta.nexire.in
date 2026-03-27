@@ -297,7 +297,7 @@ export default function SearchResultsPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               className="flex h-7 w-7 items-center justify-center rounded-lg text-[#52525B] transition-colors hover:bg-[#1A1A1A] hover:text-[#A1A1AA]"
-                              title="Open LinkedIn"
+                              title="Open Profile"
                             >
                               <ExternalLink className="h-3.5 w-3.5" />
                             </a>
@@ -464,7 +464,7 @@ export default function SearchResultsPage() {
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-[#222222] py-2 text-xs font-medium text-[#A1A1AA] transition-colors hover:border-[#333333] hover:text-white"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  LinkedIn
+                  Profile
                 </a>
               )}
               <button

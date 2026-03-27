@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
   // Get profile — should exist from handle_new_user trigger
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, full_name, avatar_url, job_title, org_id")
+    .select("id, full_name, avatar_url, job_title, org_id, onboarding_status")
     .eq("id", user.id)
     .single();
 
@@ -77,7 +77,11 @@ export async function GET(request: NextRequest) {
     isNewUser = true;
     const { data: newOrg } = await admin
       .from("orgs")
-      .insert({ name: "My Organisation", plan: "free", credits_balance: 50 })
+      .insert({ 
+        name: `${googleName}'s Workspace`, 
+        plan: "free", 
+        credits_balance: 50 
+      })
       .select("id")
       .single();
 
@@ -117,6 +121,11 @@ export async function GET(request: NextRequest) {
     // No job_title = first-time profile setup
     if (!profile.job_title) {
       isNewUser = true;
+    }
+
+    // Waitlisted user — redirect to waitlist page regardless of login state
+    if (profile.onboarding_status === "waitlisted") {
+      return NextResponse.redirect(`${origin}/waitlist`);
     }
   }
 

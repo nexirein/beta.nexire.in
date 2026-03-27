@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { Loader2, Pencil, ChevronDown, ChevronUp, ArrowRight, X, Clock, ChevronRight, Sparkles } from "lucide-react";
+import { Loader2, Pencil, ChevronDown, ChevronUp, ArrowRight, X, ChevronRight, Sparkles, Target, Gauge, LayoutGrid } from "lucide-react";
 import { useSearchStore } from "@/lib/store/search-store";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -25,17 +25,20 @@ const FilterChip = ({
   variant = 'default',
   isRemovable = false,
   onRemove,
-  isBottleneck = false
+  isBottleneck = false,
+  title,
 }: { 
   label: string; 
   variant?: 'default' | 'brand' | 'success' | 'warning' | 'ghost';
   isRemovable?: boolean;
   onRemove?: () => void;
   isBottleneck?: boolean;
+  title?: string;
 }) => (
   <motion.div 
     initial={{ opacity: 0, scale: 0.9 }}
     animate={{ opacity: 1, scale: 1 }}
+    title={title}
     className={cn(
       "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all group border shadow-sm",
       variant === 'default' && "bg-white text-gray-600 border-gray-100",
@@ -146,28 +149,45 @@ export function FilterSummaryCard({
     const fs = resolved as Record<string, unknown>;
     const extractionData = (accumulatedContext._resolution || {} as Record<string, unknown>).extraction || {} as Record<string, unknown>;
 
-    // Job titles: prefer filterState.titles, fallback to LLM extraction, then context
+    // Job titles:
+    // - "primaryJobTitles" = what the user explicitly asked for (from accumulatedContext.job_titles)
+    // - "similarJobTitles" = CrustData autocomplete-expanded titles NOT in user's explicit list
+    // This ensures "Fleet Manager" always shows as primary, not "Logistics Manager".
     const resolvedTitles = Array.isArray(fs.titles) ? (fs.titles as string[]) : [];
-    const rawTitlesContext = Array.isArray(accumulatedContext.job_titles) ? accumulatedContext.job_titles : [];
-    const extractedTitles = Array.isArray((extractionData as Record<string, unknown>).raw_job_titles) 
-      ? ((extractionData as Record<string, unknown>).raw_job_titles as string[]) : [];
-    const allTitles = resolvedTitles.length > 0 ? resolvedTitles 
-      : rawTitlesContext.length > 0 ? rawTitlesContext : extractedTitles;
+    const userExplicitTitles = Array.isArray(accumulatedContext.job_titles)
+      ? (accumulatedContext.job_titles as string[])
+      : [];
+    const expandedTitles = resolvedTitles.filter(
+      t => !userExplicitTitles.some(u => u.toLowerCase() === t.toLowerCase())
+    );
 
-    const primaryJobTitles = allTitles.slice(0, 2);
-    const similarJobTitles = allTitles.slice(2, 8);
+    // Primary = user's explicit titles; if none yet, fall back to first resolved
+    const primaryJobTitles = userExplicitTitles.length > 0
+      ? userExplicitTitles
+      : resolvedTitles.slice(0, 2);
+    // Similar = autocomplete-only expanded titles
+    const similarJobTitles = expandedTitles.slice(0, 6);
 
-    // Location: prefer filterState.region, fallback to context/extraction
+    // Location: prefer filterState.region (fully resolved canonical string), fallback to context/extraction
+    // Display label = clean short form, e.g. "Vadodara Taluka, Gujarat, India" → "Vadodara, Gujarat"
+    // Tooltip shows the full canonical string + radius so user knows exact geo used.
+    const ADMIN_SUFFIX_DISPLAY = /\s+(taluka|district|tehsil|division|municipality|cantonment|township|block|mandal|rural)\b.*/i;
+    const formatLocationLabel = (full: string): string => {
+      const parts = full.split(",").map(p => p.trim());
+      const cleanCity = parts[0].replace(ADMIN_SUFFIX_DISPLAY, "").trim();
+      if (parts.length >= 2) return `${cleanCity}, ${parts[1].trim()}`;
+      return cleanCity;
+    };
     const regionStr = typeof fs.region === "string" ? fs.region : null;
     const radiusMiles = typeof fs.radius_miles === "number" ? fs.radius_miles : 30;
     const rawLocCtx = Array.isArray(accumulatedContext.locations) ? (accumulatedContext.locations as string[]) : [];
     const extractedLoc = typeof (extractionData as Record<string, unknown>).raw_location === "string" 
       ? [(extractionData as Record<string, unknown>).raw_location as string] : [];
     const locationItems = regionStr 
-      ? [{ label: regionStr, tooltip: [`Radius: ${radiusMiles} miles`] }]
+      ? [{ label: formatLocationLabel(regionStr), tooltip: [regionStr, `Within ${radiusMiles} mi`] }]
       : rawLocCtx.length > 0 
-        ? rawLocCtx.map((l) => ({ label: l, tooltip: [] })) 
-        : extractedLoc.map((l) => ({ label: l, tooltip: [] }));
+        ? rawLocCtx.map((l) => ({ label: formatLocationLabel(l), tooltip: [l] })) 
+        : extractedLoc.map((l) => ({ label: formatLocationLabel(l), tooltip: [l] }));
 
     // Industries: prefer filterState.company_industries
     const industries = Array.isArray(fs.company_industries) 
@@ -245,13 +265,14 @@ export function FilterSummaryCard({
 
   // Early return moved down to respect hooks
   
-  // Header: show first title from CrustData filterState or fallback
+  // Header: always show what the user explicitly asked for — never the AI's expanded title.
+  // e.g. "Fleet Manager" must show even if filterState.titles[0] is "Logistics Manager".
   const headerTitleDisplay = isHistorical
     ? (historicalData?.filters as Record<string, unknown>)?.titles
       ? ((historicalData?.filters as Record<string, unknown>)?.titles as string[])?.[0] || "Ready"
       : "Ready"
-    : ((accumulatedContext._resolvedFilters as Record<string, unknown>)?.titles as string[])?.[0]
-      || accumulatedContext.job_titles?.[0]
+    : accumulatedContext.job_titles?.[0]
+      || ((accumulatedContext._resolvedFilters as Record<string, unknown>)?.titles as string[])?.[0]
       || "Ready";
 
   const isReady = isHistorical ? true : (!isEstimatingMatches && !isResolvingFilters);
@@ -380,7 +401,7 @@ export function FilterSummaryCard({
 
   const handleExpandSearch = () => {
     setInputValue(`Expand titles to include similar roles like ${expansionSuggestion}`);
-    setTimeout(() => handleMiniSubmit(syntheticEvent), 10);
+    setTimeout(() => handleMiniSubmit(new Event('submit') as any), 10);
   };
 
   if (!isVisible) return null;
@@ -408,16 +429,31 @@ export function FilterSummaryCard({
       >
         <div className="flex items-center gap-3">
           <div className="flex flex-col">
-            <h3 className="font-bold text-text-primary text-[15px] tracking-tight leading-none uppercase tracking-widest text-brand-600/80">
-              {isReady ? headerTitleDisplay : "Assembling Strategy..."}
-            </h3>
-            <div className="flex items-center gap-1.5 mt-1 text-[11px] text-text-secondary font-medium">
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-gray-900 text-[15px] tracking-tight leading-none">
+                {isReady ? headerTitleDisplay : "Building search plan..."}
+              </h3>
+              {/* Search intent badge */}
+              {accumulatedContext.search_intent && (
+                <span className={cn(
+                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                  accumulatedContext.search_intent === "tight" && "bg-violet-50 text-violet-600 border-violet-200",
+                  accumulatedContext.search_intent === "balanced" && "bg-blue-50 text-blue-600 border-blue-200",
+                  accumulatedContext.search_intent === "wide" && "bg-emerald-50 text-emerald-600 border-emerald-200",
+                )}>
+                  {accumulatedContext.search_intent === "tight" && <><Target className="w-2.5 h-2.5" /> Exact</>}
+                  {accumulatedContext.search_intent === "balanced" && <><Gauge className="w-2.5 h-2.5" /> Balanced</>}
+                  {accumulatedContext.search_intent === "wide" && <><LayoutGrid className="w-2.5 h-2.5" /> Wide</>}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 mt-1 text-[11px] text-gray-500 font-medium">
               <span>{primaryMetroLabel}</span>
-              <span className="text-gray-300">•</span>
+              <span className="text-gray-300">·</span>
               <span>{display.expYears || "Any exp"}</span>
               {display.industries.length > 0 && (
                 <>
-                  <span className="text-gray-300">•</span>
+                  <span className="text-gray-300">·</span>
                   <span className="truncate max-w-[100px]">{display.industries[0]}</span>
                 </>
               )}
@@ -474,13 +510,13 @@ export function FilterSummaryCard({
                   </motion.span>
                 ) : (
                   <motion.span 
-                    key="estimating"
+                    key="planning"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     className="flex items-center gap-1.5"
                   >
-                    Counting candidates...
+                    Defining pool...
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -508,37 +544,39 @@ export function FilterSummaryCard({
             >
               {/* ── Body ── */}
               <div className="flex-1 overflow-y-auto custom-scrollbar relative">
-                <div className="shrink-0 bg-white border-b border-brand-100 px-5 py-4">
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-1.5 text-brand-600/60 uppercase font-bold tracking-widest text-[9px]">
-                      Search Strategy
-                    </div>
-                    <div className="relative">
-                      <textarea
-                        readOnly
-                        value={accumulatedContext.requirement_summary || "Defining the optimal search strategy for your requirement..."}
-                        className="w-full text-[13px] text-text-primary font-medium bg-brand-50/30 border border-brand-100 rounded-lg p-3 focus:outline-none resize-none min-h-[60px] leading-relaxed italic"
-                      />
-                      {!accumulatedContext.requirement_summary && !isReady && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <Loader2 className="w-4 h-4 text-brand-400 animate-spin" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                <div className="shrink-0 bg-white border-b border-gray-100 px-5 py-4">
+                  <p className="text-[13px] text-gray-600 leading-relaxed">
+                    {accumulatedContext.requirement_summary
+                      ? accumulatedContext.requirement_summary
+                      : isReady
+                        ? `Searching for a ${headerTitleDisplay} ${display.locationItems.length > 0 ? `in ${display.locationItems.map(l => l.label).join(", ")}` : ""}${display.expYears ? ` with ${display.expYears} experience` : ""}.`
+                        : "Structuring your search criteria..."
+                    }
+                  </p>
                 </div>
 
                 {!isReady && (
-                  <div className="absolute inset-x-0 bottom-0 top-[110px] z-10 bg-surface/90 backdrop-blur-md p-4 grid grid-cols-2 gap-4">
-                    {[...Array(4)].map((_, i) => (
-                      <div key={i} className="flex flex-col gap-3">
-                        <div className="w-16 h-2.5 bg-brand-100 animate-pulse rounded" />
-                        <div className="flex gap-1.5">
-                          <div className="w-14 h-5 bg-brand-50 animate-pulse rounded-full" />
-                          <div className="w-10 h-5 bg-brand-50 animate-pulse rounded-full" />
-                        </div>
+                  <div className="absolute inset-x-0 bottom-0 top-[57px] z-10 bg-white/95 backdrop-blur-sm p-5 space-y-4">
+                    <div className="space-y-2">
+                      <div className="h-2.5 w-12 bg-gray-200 rounded-full animate-pulse" />
+                      <div className="flex flex-wrap gap-1.5">
+                        {[90, 120, 80].map((w, i) => (
+                          <div key={i} className="h-7 rounded-full bg-gray-100 animate-pulse" style={{ width: w, animationDelay: `${i * 0.1}s` }} />
+                        ))}
                       </div>
-                    ))}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-2.5 w-16 bg-gray-200 rounded-full animate-pulse" />
+                      <div className="flex flex-wrap gap-1.5">
+                        {[100, 70].map((w, i) => (
+                          <div key={i} className="h-7 rounded-full bg-gray-100 animate-pulse" style={{ width: w, animationDelay: `${i * 0.15}s` }} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Loader2 className="w-3.5 h-3.5 text-brand-400 animate-spin shrink-0" />
+                      <span className="text-[12px] text-gray-400">Resolving profile-native filters...</span>
+                    </div>
                   </div>
                 )}
 
@@ -595,7 +633,8 @@ export function FilterSummaryCard({
                       {display.locationItems.map((loc, idx) => (
                         <FilterChip 
                           key={loc.label} 
-                          label={loc.label} 
+                          label={loc.label}
+                          title={loc.tooltip?.join(" · ")}
                           isRemovable 
                           onRemove={() => onRemoveFilter?.('location', loc.label)}
                           isBottleneck={estimatedMatches === 0}
@@ -823,7 +862,7 @@ export function FilterSummaryCard({
             <><span className="animate-pulse">Analyzing pool...</span></>
           ) : (
             <>
-              {hasResults ? `Explore All ${estimatedMatches} Candidates` : "Initiate Search"} 
+              {hasResults ? `Explore All ${estimatedMatches ?? 0} Candidates` : "Initiate Search"} 
               <ArrowRight className="w-4 h-4" />
             </>
           )}

@@ -311,7 +311,7 @@ function GeneralSection({
       </div>
 
       <div>
-        <SectionTitle>Min LinkedIn Connections</SectionTitle>
+        <SectionTitle>Min Profile Connections</SectionTitle>
         <NumberInput
           placeholder="e.g. 500"
           value={filters.num_connections_min}
@@ -842,7 +842,7 @@ function SkillsSection({
     <div className="space-y-6">
       <div>
         <div className="mb-2">
-          <SectionTitle note="(LinkedIn profile skills)">Required Skills</SectionTitle>
+          <SectionTitle note="(profile skills)">Required Skills</SectionTitle>
         </div>
         <CrustDataAutocomplete
           fieldType="skill"
@@ -853,7 +853,7 @@ function SkillsSection({
           maxValues={15}
         />
         <p className="mt-1.5 text-xs text-[#9CA3AF]">
-          Matched against the <code>skills[]</code> field on each person&apos;s LinkedIn profile.
+          Matched against the <code>skills[]</code> field on each person&apos;s public profile.
         </p>
       </div>
 
@@ -943,7 +943,7 @@ function EducationSection({
       </div>
 
       <div>
-        <SectionTitle>LinkedIn Profile Language</SectionTitle>
+        <SectionTitle>Profile Language</SectionTitle>
         <div className="flex flex-wrap gap-2">
           {PROFILE_LANGUAGES.map((l) => (
             <ChipToggle
@@ -989,7 +989,7 @@ function BooleanSection({
           value={filters.headline ?? ""}
           onChange={(v) => setFilter("headline", v || undefined)}
         />
-        <p className="mt-1 text-xs text-[#9CA3AF]">Fuzzy-matches against the person&apos;s LinkedIn headline/bio</p>
+        <p className="mt-1 text-xs text-[#9CA3AF]">Fuzzy-matches against the person&apos;s headline and bio</p>
       </div>
 
       <div>
@@ -1015,15 +1015,23 @@ function BooleanSection({
 
 // ─── Active filter summary chips ──────────────────────────────────────────────
 
+// Strips admin suffixes and country for clean display: "Vadodara Taluka, Gujarat, India" → "Vadodara, Gujarat"
+function formatRegionLabel(full: string): string {
+  const ADMIN_RE = /\s+(taluka|district|tehsil|division|municipality|cantonment|township|block|mandal|nagar|rural)\b.*/i;
+  const parts = full.split(",").map(p => p.trim());
+  const cleanCity = parts[0].replace(ADMIN_RE, "").trim();
+  return parts.length >= 2 ? `${cleanCity}, ${parts[1]}` : cleanCity;
+}
+
 function ActiveFilterBadges({ filters }: { filters: CrustDataFilterState }) {
   const chips: string[] = [];
   if (filters.titles?.length) chips.push(...filters.titles.slice(0, 2).map(t => `Title: ${t}`));
   if (filters.regions?.length) {
     const firstRegion = filters.regions[0];
     const restCount = filters.regions.length - 1;
-    chips.push(`📍 ${firstRegion}${restCount > 0 ? ` +${restCount}` : ""}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
+    chips.push(`📍 ${formatRegionLabel(firstRegion)}${restCount > 0 ? ` +${restCount}` : ""}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
   } else if (filters.region) {
-    chips.push(`📍 ${filters.region}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
+    chips.push(`📍 ${formatRegionLabel(filters.region)}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
   }
   if (filters.seniority?.length) chips.push(...filters.seniority.slice(0, 2));
   if (filters.company_industries?.length) chips.push(...filters.company_industries.slice(0, 1).map(i => `Industry: ${i}`));

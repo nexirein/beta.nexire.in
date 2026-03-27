@@ -686,7 +686,7 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="flex-shrink-0 transition-transform duration-300 group-hover:scale-105 group-hover:shadow-md rounded-lg overflow-hidden mt-0.5"
-                          title="View on LinkedIn"
+                          title="View professional profile"
                         >
                           <InstituteAvatar logoUrl={edu.institute_logo_url} name={edu.institute_name ?? ""} size={42} />
                         </a>
@@ -705,7 +705,7 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                               href={instituteHref}
                               target="_blank" rel="noopener noreferrer"
                               className="hover:text-violet-700 hover:underline inline-flex items-center gap-1.5 transition-colors"
-                              title="View on LinkedIn"
+                              title="View professional profile"
                             >
                                {edu.institute_name}
                                <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-violet-500 transition-colors" />

@@ -12,7 +12,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 // Routes that do NOT require authentication
-const PUBLIC_ROUTES = ["/login", "/signup", "/share", "/auth"];
+const PUBLIC_ROUTES = ["/login", "/signup", "/share", "/auth", "/waitlist"];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some(
