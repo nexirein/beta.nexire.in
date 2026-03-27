@@ -23,13 +23,24 @@ export function Topbar({ breadcrumb, onNewSearch }: TopbarProps) {
   const { profile, org } = useUser();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { lastCreditsUsed } = useSearchStore();
+  const { lastCreditsUsed, projectId } = useSearchStore();
 
-  async function handleLogout() {
+  function handleLogout() {
     const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
+    supabase.auth.signOut().then(() => {
+      router.push("/login");
+      router.refresh();
+    });
+  }
+
+  function handleNewSearch() {
+    if (onNewSearch) {
+      onNewSearch();
+      return;
+    }
+    // Default behavior: fresh navigate to /search with current project context
+    const url = projectId ? `/search?project_id=${projectId}&t=${Date.now()}` : `/search?t=${Date.now()}`;
+    window.location.href = url;
   }
 
   const initials = getInitials(profile?.full_name);
@@ -73,8 +84,8 @@ export function Topbar({ breadcrumb, onNewSearch }: TopbarProps) {
 
         {/* New Search */}
         <button
-          onClick={onNewSearch}
-          className="flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-500/20 transition-all hover:bg-brand-600"
+          onClick={handleNewSearch}
+          className="flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-500/20 transition-all hover:bg-brand-600 active:scale-95"
         >
           <Plus className="h-3.5 w-3.5" />
           New Search

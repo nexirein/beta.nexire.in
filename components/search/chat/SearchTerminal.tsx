@@ -365,17 +365,30 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
               exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
               className="flex-1 flex flex-col items-center justify-center text-center max-w-2xl mx-auto w-full px-4 py-16"
             >
-              {/* Brand icon (Simple Nexire 'N') */}
-              <div className="w-16 h-16 mb-5 flex items-center justify-center">
-                <img src="/assets/logos/favicon_nex.png" alt="Nexire" className="max-h-16 w-auto object-contain" />
-              </div>
+              {/* Premium Brand Icon */}
+              <motion.div 
+                animate={{ 
+                  scale: [1, 1.08, 1],
+                  opacity: [0.8, 1, 0.8]
+                }}
+                transition={{ 
+                  duration: 6, 
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="w-24 h-24 mb-8 flex items-center justify-center rounded-[24px] bg-gradient-to-b from-brand-50 to-white p-5 border border-brand-100 shadow-sm relative group"
+              >
+                <div className="absolute inset-0 bg-brand-500/10 rounded-[24px] blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                <img src="/assets/logos/favicon_nex.png" alt="Nexire" className="max-h-full w-auto object-contain relative z-10" />
+              </motion.div>
 
-              <h2 className="text-2xl font-bold text-text-primary tracking-tight mb-2">
+              <h2 className="text-3xl font-bold text-text-primary tracking-tight mb-4">
                 Hey {firstName}, who are you hiring?
               </h2>
-              <p className="text-text-secondary text-sm mb-8 max-w-md">
-                Describe the role in plain English — I&apos;ll find the right candidates. You can mention skills, experience, location, industry, or paste a full JD.
-              </p>
+              <div className="text-text-secondary text-base mb-12 max-w-2xl leading-relaxed">
+                <p>Describe the role in plain English — I&apos;ll find the best candidates for you.</p>
+                <p className="mt-1 opacity-80">Mention skills, experience, location, or paste a full JD to start.</p>
+              </div>
 
               {/* Input */}
               <div className="w-full">
