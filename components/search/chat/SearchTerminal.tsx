@@ -368,26 +368,37 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
               {/* Premium Brand Icon */}
               <motion.div 
                 animate={{ 
-                  scale: [1, 1.08, 1],
-                  opacity: [0.8, 1, 0.8]
+                  y: [0, -8, 0],
                 }}
                 transition={{ 
-                  duration: 6, 
+                  duration: 4, 
                   repeat: Infinity,
                   ease: "easeInOut"
                 }}
-                className="w-24 h-24 mb-8 flex items-center justify-center rounded-[24px] bg-gradient-to-b from-brand-50 to-white p-5 border border-brand-100 shadow-sm relative group"
+                className="w-24 h-24 mb-10 flex items-center justify-center rounded-[28px] bg-white p-5 border border-brand-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative group"
               >
-                <div className="absolute inset-0 bg-brand-500/10 rounded-[24px] blur-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
-                <img src="/assets/logos/favicon_nex.png" alt="Nexire" className="max-h-full w-auto object-contain relative z-10" />
+                {/* Glow effects */}
+                <div className="absolute inset-0 bg-brand-500/5 rounded-[28px] blur-2xl opacity-100 transition-opacity duration-1000" />
+                <motion.div 
+                  animate={{ 
+                    scale: [1, 1.2, 1],
+                    opacity: [0.3, 0.6, 0.3]
+                  }}
+                  transition={{ duration: 4, repeat: Infinity }}
+                  className="absolute inset-4 bg-brand-500/10 rounded-full blur-xl" 
+                />
+                
+                <img src="/assets/logos/favicon_nex.png" alt="Nexire" className="max-h-full w-auto object-contain relative z-10 drop-shadow-sm" />
               </motion.div>
 
-              <h2 className="text-3xl font-bold text-text-primary tracking-tight mb-4">
-                Hey {firstName}, who are you hiring?
+              <h2 className="text-2xl font-bold text-text-primary tracking-tight mb-4 flex flex-col items-center gap-0.5">
+                <span className="bg-clip-text text-transparent bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900">Hello {firstName},</span>
+                <span className="text-text-secondary font-medium text-xl">Who are you hiring today?</span>
               </h2>
-              <div className="text-text-secondary text-base mb-12 max-w-2xl leading-relaxed">
-                <p>Describe the role in plain English — I&apos;ll find the best candidates for you.</p>
-                <p className="mt-1 opacity-80">Mention skills, experience, location, or paste a full JD to start.</p>
+              
+              <div className="text-text-tertiary text-[14px] mb-10 max-w-lg leading-relaxed flex flex-col items-center gap-1 opacity-80">
+                <p className="font-medium">Describe the role in plain English — I&apos;ll find the best candidates for you.</p>
+                <p>Mention skills, experience, and location or paste a JD to begin.</p>
               </div>
 
               {/* Input */}

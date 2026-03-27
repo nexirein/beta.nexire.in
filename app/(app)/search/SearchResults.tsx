@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { sanitizeTitle } from "@/lib/utils/sanitizeTitle";
 import { CompanyHoverCard } from "@/components/search/CompanyHoverCard";
+import { getProxiedImageUrl } from "@/lib/utils/image-proxy";
 
 const LOGO_DEV_KEY = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN ?? "pk_JgbzA-I-Ssu_JN0iUMq1rQ";
 
@@ -105,10 +106,13 @@ function ProfileAvatar({ url, permalink, name, size = 32 }: { url?: string | nul
   const [usedPermalink, setUsedPermalink] = useState(false);
   const initials = name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
   if (src) {
+    const proxiedSrc = getProxiedImageUrl(src);
     return (
-      <img src={src} alt={name} width={size} height={size}
+      <img src={proxiedSrc ?? ""} alt={name} width={size} height={size}
         className="rounded-full object-cover ring-2 ring-indigo-50 flex-shrink-0"
         style={{ width: size, height: size }}
+        onContextMenu={(e) => e.preventDefault()}
+        draggable={false}
         onError={() => {
           if (!usedPermalink && permalink) { setUsedPermalink(true); setSrc(permalink); }
           else setSrc(null);

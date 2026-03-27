@@ -203,12 +203,12 @@ export function Sidebar() {
           </Link>
         )}
         {collapsed && (
-          <div className={cn("flex items-center justify-center overflow-hidden", logoError ? "h-7 w-7 rounded-lg bg-brand-500" : "h-7 w-auto max-w-[40px] px-1 bg-transparent")}>
-            {!logoError ? (
-              <img src="/assets/logos/logo.png" alt="Logo" className="max-h-7 w-auto object-contain" onError={() => setLogoError(true)} />
-            ) : (
-              <Zap className="h-4 w-4 text-white" />
-            )}
+          <div className="flex items-center justify-center p-1">
+            <img 
+              src="/favicon.ico" 
+              alt="Nexire" 
+              className="h-7 w-7 object-contain" 
+            />
           </div>
         )}
         <button

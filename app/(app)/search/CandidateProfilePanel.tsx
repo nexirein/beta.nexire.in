@@ -13,6 +13,7 @@ import { sanitizeTitle } from "@/lib/utils/sanitizeTitle";
 import { CompanyHoverCard } from "@/components/search/CompanyHoverCard";
 import { InstituteHoverCard } from "@/components/search/InstituteHoverCard";
 import { useSearchStore } from "@/lib/store/search-store";
+import { getProxiedImageUrl } from "@/lib/utils/image-proxy";
 
 const LOGO_DEV_KEY = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN ?? "pk_JgbzA-I-Ssu_JN0iUMq1rQ";
 const LOGO_SEARCH_CACHE: Record<string, string | null> = {};
@@ -127,10 +128,13 @@ function ProfileAvatar({ url, permalink, name, size = 64 }: { url?: string | nul
   const [usedPermalink, setUsedPermalink] = useState(false);
   const initials = name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
   if (src) {
+    const proxiedSrc = getProxiedImageUrl(src);
     return (
-      <img src={src} alt={name} width={size} height={size}
+      <img src={proxiedSrc ?? ""} alt={name} width={size} height={size}
         className="rounded-full object-cover ring-2 ring-indigo-100 flex-shrink-0 shadow-sm"
         style={{ width: size, height: size }}
+        onContextMenu={(e) => e.preventDefault()}
+        draggable={false}
         onError={() => {
           if (!usedPermalink && permalink) { setUsedPermalink(true); setSrc(permalink); }
           else setSrc(null);
