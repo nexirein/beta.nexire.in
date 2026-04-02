@@ -11,6 +11,7 @@ import type { LLMExtractedFilters } from "./extractor";
 import { buildCrustDataFilters } from "@/lib/crustdata/filter-builder";
 import { resolveCrustDataIndustries } from "@/lib/crustdata/industry-map";
 import type { CrustDataFilterState, CrustDataFilterNode } from "@/lib/crustdata/types";
+import type { RankingCriterion } from "@/components/search/RankingPrioritySelector";
 
 // ─── Input from context-to-filters route ──────────────────────────────────────
 export interface CrustDataAssemblerInput {
@@ -18,7 +19,7 @@ export interface CrustDataAssemblerInput {
   resolvedTitles: string[];
   resolvedRegions: string[];
   resolvedIndustries?: string[];
-  radiusMiles?: number;
+  radiusKm?: number;
   booleanSearchExpression?: string | null;
   /**
    * Titles the user explicitly stated (from accumulatedContext.job_titles).
@@ -26,6 +27,10 @@ export interface CrustDataAssemblerInput {
    * regardless of what CrustData autocomplete returns.
    */
   userTitles?: string[];
+  /**
+   * User's preferred ranking order (e.g. titles > skills > location > experience).
+   */
+  ranking_priority?: RankingCriterion[];
 }
 
 // ─── Output mirrors the existing assembleProspeoFilters interface ──────────────
@@ -199,38 +204,31 @@ export function assembleCrustDataFilters(input: CrustDataAssemblerInput): CrustD
     extracted,
     resolvedTitles,
     resolvedRegions,
-    radiusMiles = 30,
+    radiusKm = 50,
     booleanSearchExpression,
     userTitles = [],
+    ranking_priority,
   } = input;
 
   // ── 1. Build CrustDataFilterState from extracted signals ────────────────────
-  const filterState: CrustDataFilterState = {};
+  const filterState: CrustDataFilterState = {
+    ranking_priority: ranking_priority || ["titles", "skills", "location", "experience"]
+  };
 
   // Job titles: user's explicit titles ALWAYS come first (pinned).
-  // CrustData autocomplete results follow. We only fall back to LLM's
-  // similar_job_titles when autocomplete gave us very few results.
+  // CrustData autocomplete results follow. 
+  // CRITICAL FIX: Removed LLM fallbacks (extraTitles, similar_job_titles) 
+  // to stop credit loss and irrelevant results.
   const pinnedTitles = userTitles.filter(Boolean);
   const coreTitles = resolvedTitles.filter(
     t => !pinnedTitles.some(p => p.toLowerCase() === t.toLowerCase())
   );
-  // Only add LLM similar_job_titles as a fallback when autocomplete returned fewer than 3 results.
-  // This prevents "Logistics Manager" from appearing when user only asked for "Fleet Manager".
-  const hasEnoughResolved = (pinnedTitles.length + coreTitles.length) >= 3;
-  const extraTitles = hasEnoughResolved
-    ? []
-    : [
-        ...(extracted.raw_job_titles ?? []),
-        ...(extracted.similar_job_titles ?? []),
-      ].filter(t =>
-        !pinnedTitles.some(p => p.toLowerCase() === t.toLowerCase()) &&
-        !coreTitles.some(c => c.toLowerCase() === t.toLowerCase())
-      );
+  
+  // No more extraTitles expansion. Stick strictly to what was explicitly confirmed.
   const allTitles = Array.from(new Set([
-    ...pinnedTitles,  // user's explicit titles — always first
-    ...coreTitles,    // CrustData autocomplete results
-    ...extraTitles,   // LLM fallback only when we have too few
-  ])).slice(0, 8);
+    ...pinnedTitles,
+    ...coreTitles,
+  ])).slice(0, 10);
 
   // STRATEGY ENFORCEMENT: Filter-First
   // If we have specific job titles, use them and IGNORE boolean expression to prevent over-constraining.
@@ -245,17 +243,16 @@ export function assembleCrustDataFilters(input: CrustDataAssemblerInput): CrustD
   // Location: geo_distance from CrustData autocomplete resolved regions
   const allRegions = Array.from(new Set([
     ...resolvedRegions,
-    ...(extracted.similar_locations ?? []),
   ])).filter(Boolean);
 
   if (allRegions.length > 0) {
     filterState.regions = allRegions;
-    filterState.region = allRegions[0]; // Kept for backwards compatibility
-    filterState.radius_miles = radiusMiles;
+    filterState.region = allRegions[0]; 
+    filterState.radius_km = radiusKm;
   } else if (extracted.raw_location) {
     filterState.regions = [extracted.raw_location];
     filterState.region = extracted.raw_location;
-    filterState.radius_miles = radiusMiles;
+    filterState.radius_km = radiusKm;
   }
 
   // Experience: use the value the user specified verbatim.
@@ -334,7 +331,6 @@ export function assembleCrustDataFilters(input: CrustDataAssemblerInput): CrustD
   } else {
     const rawIndustries = [
       ...(extracted.raw_industry ?? []),
-      ...(extracted.similar_industries ?? []),
     ].filter(Boolean);
 
     if (rawIndustries.length > 0) {

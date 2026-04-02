@@ -2,13 +2,18 @@
 /**
  * components/search/InsightText.tsx
  *
- * Renders streamed AI insight text with:
- * 1. Word-by-word GPT-style reveal (tokens stream in from useInsightStream)
- * 2. Keyword highlighting — must_skills highlighted amber, title_variants in indigo
- * 3. Smooth fade-in for each token chunk
+ * Renders AI insight in the new structured diagnostic format (v2).
+ *
+ * Parses labeled lines:
+ *   [Match]    → skill match ratio + highlighted skills
+ *   [Exp]      → experience context
+ *   [Strengths]→ key strengths
+ *   [Gaps]     → missing skills / gaps
+ *   [Verdict]  → Strong Fit | Good Fit | Moderate Fit | Weak Fit
+ *
+ * Falls back to plain-text rendering for old-format cached insights.
  */
 
-import { useEffect, useRef } from "react";
 import { Sparkles } from "lucide-react";
 import { useInsightStream } from "@/lib/hooks/useInsightStream";
 import { useSearchStore } from "@/lib/store/search-store";
@@ -18,10 +23,6 @@ interface InsightTextProps {
   personId: string;
   searchId: string;
   enabled: boolean;
-  /** Keywords to highlight at title-variant strength (indigo) */
-  titleKeywords?: string[];
-  /** Keywords to highlight at must-skill strength (amber) */
-  skillKeywords?: string[];
   contextData: {
     currentTitle: string;
     currentCompany: string;
@@ -30,106 +31,264 @@ interface InsightTextProps {
     educationStr: string | null;
     summary: string | null;
     ai_insight?: string | null;
+    companyType?: string | null;
+    industry?: string | null;
   };
 }
 
-function parseInsight(textOrObj: string | any): { signal: string; tags: string[] } {
-  // If it's already an object (from DB), use it directly
-  if (textOrObj && typeof textOrObj === "object") {
-    return {
-      signal: textOrObj.signal || "",
-      tags: Array.isArray(textOrObj.tags) ? textOrObj.tags : []
-    };
-  }
-
-  // Otherwise, parse it as a string (streaming phase)
-  const text = textOrObj as string;
-  try {
-    const trimmed = text.trim();
-    if (!trimmed) return { signal: "", tags: [] };
-    
-    // List of common conversational prefixes to strip or ignore
-    const BOILERPLATE_PREFIXES = [
-      "here is the json requested:", 
-      "here is the json:", 
-      "json requested:", 
-      "as requested:",
-      "here's the json:",
-      "the match signal is:",
-      "match signal:"
-    ];
-
-    // Find first '{' - we ALWAYS discard anything before the first brace.
-    const firstBrace = trimmed.indexOf("{");
-    
-    if (firstBrace !== -1) {
-      const jsonCandidate = trimmed.substring(firstBrace);
-      
-      // Try full parse if it contains a closing brace
-      if (jsonCandidate.includes("}")) {
-        try {
-          const lastBrace = jsonCandidate.lastIndexOf("}");
-          const potentialJson = jsonCandidate.substring(0, lastBrace + 1);
-          const parsed = JSON.parse(potentialJson);
-          if (parsed.signal !== undefined || Array.isArray(parsed.tags)) {
-            return {
-              signal: parsed.signal || "",
-              tags: Array.isArray(parsed.tags) ? parsed.tags : []
-            };
-          }
-        } catch (e) { /* fall through to regex */ }
-      }
-
-      // Regex extraction (handles partial/streaming and malformed JSON)
-      const signalMatch = jsonCandidate.match(/"signal":\s*"((?:[^"\\]|\\.)*)"/); // Handle escaped quotes
-      const tagsMatch = jsonCandidate.match(/"tags":\s*\[(.*?)\]/);
-      
-      const signal = signalMatch ? signalMatch[1].replace(/\\"/g, '"') : "";
-      const tags = tagsMatch 
-        ? tagsMatch[1]
-            .split(",")
-            .map(t => t.replace(/"/g, "").trim())
-            .filter(t => t.length > 0)
-        : [];
-      
-      if (signal || tags.length > 0) {
-        return { signal, tags };
-      }
-
-      return { signal: "", tags: [] };
-    }
-
-    // Fallback: Check if the whole string is just a boilerplate prefix
-    const lowerTrimmed = trimmed.toLowerCase();
-    if (BOILERPLATE_PREFIXES.some(p => lowerTrimmed.startsWith(p))) {
-      return { signal: "", tags: [] };
-    }
-
-    // Fallback: If no JSON structure, treat everything after a colon or the whole string as the signal
-    if (trimmed.includes("Match Signal:") || trimmed.includes("signal:")) {
-      const parts = trimmed.split(/Match Signal:|signal:/i);
-      return { signal: parts[parts.length - 1].trim().replace(/^"|"$/g, ""), tags: [] };
-    }
-
-  } catch (e) { /* silently fail */ }
-  return { signal: (text || "").replace(/^"|"$/g, "").trim(), tags: [] };
+// ── Structured insight line types ─────────────────────────────────────────────
+interface ParsedInsight {
+  match: string | null;
+  exp: string | null;
+  strengths: string | null;
+  gaps: string | null;
+  verdict: string | null;
 }
 
+function parseStructuredInsight(raw: string): ParsedInsight | null {
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  const result: ParsedInsight = {
+    match: null,
+    exp: null,
+    strengths: null,
+    gaps: null,
+    verdict: null,
+  };
+
+  let found = 0;
+  for (const line of lines) {
+    if (/^\[Match\]/i.test(line)) {
+      result.match = line.replace(/^\[Match\]\s*→?\s*/i, "").trim();
+      found++;
+    } else if (/^\[Exp\]/i.test(line)) {
+      result.exp = line.replace(/^\[Exp\]\s*→?\s*/i, "").trim();
+      found++;
+    } else if (/^\[Strengths?\]/i.test(line)) {
+      result.strengths = line.replace(/^\[Strengths?\]\s*→?\s*/i, "").trim();
+      found++;
+    } else if (/^\[Gaps?\]/i.test(line)) {
+      result.gaps = line.replace(/^\[Gaps?\]\s*→?\s*/i, "").trim();
+      found++;
+    } else if (/^\[Verdict\]/i.test(line)) {
+      result.verdict = line.replace(/^\[Verdict\]\s*→?\s*/i, "").trim();
+      found++;
+    }
+  }
+
+  // Need at least 3 sections to treat as structured
+  return found >= 3 ? result : null;
+}
+
+// ── Verdict styling ─────────────────────────────────────────────────────────
+function getVerdictStyle(verdict: string): {
+  bg: string;
+  text: string;
+  border: string;
+  dot: string;
+} {
+  const v = verdict.toLowerCase();
+  if (v.includes("strong"))
+    return {
+      bg: "bg-emerald-50",
+      text: "text-emerald-700",
+      border: "border-emerald-200",
+      dot: "bg-emerald-500",
+    };
+  if (v.includes("good"))
+    return {
+      bg: "bg-indigo-50",
+      text: "text-indigo-700",
+      border: "border-indigo-200",
+      dot: "bg-indigo-500",
+    };
+  if (v.includes("moderate"))
+    return {
+      bg: "bg-amber-50",
+      text: "text-amber-700",
+      border: "border-amber-200",
+      dot: "bg-amber-400",
+    };
+  return {
+    bg: "bg-gray-50",
+    text: "text-gray-500",
+    border: "border-gray-200",
+    dot: "bg-gray-400",
+  };
+}
+
+// ── Backtick highlight renderer ───────────────────────────────────────────────
+function HighlightedText({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  if (!text) return null;
+  const parts = text.split(/(`[^`]+`)/);
+  return (
+    <span className={className}>
+      {parts.map((part, i) => {
+        if (part.startsWith("`") && part.endsWith("`")) {
+          const content = part.slice(1, -1);
+          return (
+            <span
+              key={i}
+              className="bg-gray-100 text-gray-900 font-semibold rounded px-1 py-0.5 not-italic whitespace-nowrap text-[11px]"
+            >
+              {content}
+            </span>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </span>
+  );
+}
+
+// ── Structured insight renderer ───────────────────────────────────────────────
+function StructuredInsight({ parsed }: { parsed: ParsedInsight }) {
+  const verdictStyle = parsed.verdict
+    ? getVerdictStyle(parsed.verdict)
+    : null;
+
+  return (
+    <div className="mt-2 rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 border-b border-slate-100">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9.5px] font-bold uppercase tracking-widest text-slate-500">
+            Profile Analysis
+          </span>
+        </div>
+      </div>
+
+      {/* Body rows */}
+      <div className="px-3 py-2.5 space-y-1.5">
+        {/* Match row -> Skills */}
+        {parsed.match && (
+          <div className="flex items-start gap-2">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 min-w-[48px] pt-0.5 flex-shrink-0">
+              Skills
+            </span>
+            <HighlightedText
+              text={parsed.match}
+              className="text-[11.5px] text-gray-700 leading-snug"
+            />
+          </div>
+        )}
+
+        {/* Experience row -> Experience */}
+        {parsed.exp && (
+          <div className="flex items-start gap-2">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 min-w-[48px] pt-0.5 flex-shrink-0">
+              Exp
+            </span>
+            <HighlightedText
+              text={parsed.exp}
+              className="text-[11.5px] text-gray-700 leading-snug"
+            />
+          </div>
+        )}
+
+        {/* Strengths row -> Highlights */}
+        {parsed.strengths && (
+          <div className="flex items-start gap-2">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-600 min-w-[48px] pt-0.5 flex-shrink-0">
+              Bonus
+            </span>
+            <HighlightedText
+              text={parsed.strengths}
+              className="text-[11.5px] text-gray-700 leading-snug"
+            />
+          </div>
+        )}
+
+        {/* Gaps row -> Missing */}
+        {parsed.gaps &&
+          !parsed.gaps.toLowerCase().includes("no critical") && (
+            <div className="flex items-start gap-2">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 min-w-[48px] pt-0.5 flex-shrink-0">
+                Miss
+              </span>
+              <HighlightedText
+                text={parsed.gaps}
+                className="text-[11.5px] text-gray-600 leading-snug"
+              />
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+// ── Plain-text fallback (old format) ─────────────────────────────────────────
+function extractPlainText(raw: string | any): string {
+  if (!raw) return "";
+  if (typeof raw === "object") {
+    return (raw.signal || "").replace(/^"|"$/g, "").trim();
+  }
+  const text = (raw as string).trim();
+  if (!text) return "";
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.signal) return parsed.signal.replace(/^"|"$/g, "").trim();
+    } catch {
+      const m = text.match(/"signal":\s*"((?:[^"\\]|\\.)*)"/);
+      if (m) return m[1].replace(/\\"/g, '"').trim();
+    }
+  }
+  return text.replace(/^"|"$/g, "").trim();
+}
+
+function PlainInsight({ text }: { text: string }) {
+  const parts = text.split(/(`[^`]+`)/);
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 animate-in fade-in duration-300">
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+          Match Analysis
+        </span>
+      </div>
+      <p className="text-[12.5px] leading-[1.6] text-gray-500 pl-0.5">
+        {parts.map((part, i) => {
+          if (part.startsWith("`") && part.endsWith("`")) {
+            const content = part.slice(1, -1);
+            return (
+              <span
+                key={i}
+                className="bg-gray-100 text-gray-900 font-semibold rounded px-1 py-0.5 not-italic whitespace-nowrap"
+              >
+                {content}
+              </span>
+            );
+          }
+          return <span key={i}>{part.replace(/^"|"$/g, "")}</span>;
+        })}
+      </p>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export function InsightText({
   personId,
   searchId,
   enabled,
-  titleKeywords = [],
-  skillKeywords = [],
   contextData,
 }: InsightTextProps) {
-  const updateCandidateInsight = useSearchStore((state) => state.updateCandidateInsight);
+  const updateCandidateInsight = useSearchStore(
+    (state) => state.updateCandidateInsight
+  );
 
-  // If ai_insight is a string, it might be polluted or very old. 
-  // If it's an object, it's our new structured format.
   const cachedInsight = contextData.ai_insight;
-  
-  const { insight: streamedInsight, isStreaming, isDone, error } = useInsightStream({
+
+  const {
+    insight: streamedInsight,
+    isStreaming,
+    error,
+  } = useInsightStream({
     personId,
     searchId,
     enabled: enabled && !cachedInsight,
@@ -137,50 +296,25 @@ export function InsightText({
     onDone: (final) => updateCandidateInsight(personId, final),
   });
 
-  const insight = cachedInsight || streamedInsight;
+  const rawInsight = cachedInsight || streamedInsight;
 
-  // Not started yet
   if (!enabled) return null;
+  if (!rawInsight && isStreaming) return <InsightSkeleton />;
+  if (error && !rawInsight) return null;
+  if (!rawInsight) return null;
 
-  // Skeleton while waiting for first tokens
-  if (!insight && isStreaming) return <InsightSkeleton />;
+  const plainText =
+    typeof rawInsight === "string" ? rawInsight : extractPlainText(rawInsight);
+  if (!plainText) return null;
 
-  // Error state
-  if (error && !insight) return null;
+  // Try structured parse first
+  const parsed = parseStructuredInsight(plainText);
+  if (parsed) {
+    return <StructuredInsight parsed={parsed} />;
+  }
 
-  // Nothing to show
-  if (!insight) return null;
-
-  const { signal, tags } = parseInsight(insight);
-
-  return (
-    <div className="mt-2.5 pt-2 border-t border-indigo-50/50 flex flex-col gap-2">
-      {/* 1. The Hook (Signal) */}
-      {signal && (
-        <p className="text-[12px] font-semibold text-gray-800 leading-relaxed italic animate-in fade-in duration-500">
-          "{signal}"
-        </p>
-      )}
-
-      {/* 2. The Tags (Pills) */}
-      <div className="flex flex-wrap gap-1.5 min-h-[22px]">
-        {tags.length > 0 ? (
-          tags.map((tag, i) => (
-            <div
-              key={i}
-              className="px-2 py-0.5 text-[10px] font-medium rounded-full bg-indigo-50/80 
-                         text-indigo-700 border border-indigo-100/50 animate-in fade-in slide-in-from-left-1 duration-300"
-            >
-              {tag}
-            </div>
-          ))
-        ) : isStreaming ? (
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="w-2.5 h-2.5 text-indigo-300 animate-pulse" />
-            <span className="text-[10px] text-gray-400 font-medium italic">Analyzing profile...</span>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
+  // Fallback to old plain-text format
+  const fallback = extractPlainText(rawInsight);
+  if (!fallback) return null;
+  return <PlainInsight text={fallback} />;
 }

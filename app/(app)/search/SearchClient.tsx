@@ -47,6 +47,7 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
   const [results, setResults] = useState<ScoredCandidate[] | null>(null);
   const [resultsMeta, setResultsMeta] = useState<{ total: number; cached: boolean; totalPages: number; creditsUsed?: number } | null>(null);
   const [uiPage, setUiPage] = useState(1);
+  const [broadenNotice, setBroadenNotice] = useState<string[] | null>(null); // Which filters were relaxed by server auto-broaden
   
   // Client-side cache for instantaneous backwards pagination
   const pageCacheRef = useRef<Record<number, ScoredCandidate[]>>({});
@@ -61,46 +62,7 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
   const passLevelRef = useRef(1);
 
   // ── Persist results to DB (fire-and-forget) ────────────────────────────────
-  const persistResults = useCallback(async (
-    resultsData: unknown[],
-    total: number,
-    filtersUsed: Record<string, unknown>
-  ) => {
-    const searchId = useSearchStore.getState().searchId;
-    if (!searchId) return;
-    try {
-      const newTitle = (filtersUsed?.person_job_title as any)?.include?.[0]
-        ? `${(filtersUsed.person_job_title as any).include[0]}${(filtersUsed?.person_location_search as any)?.include?.[0] ? ` · ${(filtersUsed.person_location_search as any).include[0]}` : ""}`
-        : "New Search";
-
-      await fetch(`/api/searches/${searchId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prospeo_filters: filtersUsed,
-          estimated_matches: total,
-          status: "CONFIRMING",
-          title: newTitle !== "New Search" ? newTitle : undefined,
-        }),
-      });
-
-      // Dispatch event to sidebar so it appears in history
-      window.dispatchEvent(new CustomEvent("searchRename", { detail: { id: searchId, title: newTitle } }));
-
-      // 2. Then store results
-      await fetch(`/api/searches/${searchId}/results`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          results: resultsData,
-          total_count: total,
-          filters_json: filtersUsed,
-        }),
-      });
-    } catch {
-      // silently ignore — history is best-effort
-    }
-  }, []);
+  // (Removed redundant client-side persistResults — now handled by backend /api/search)
 
   // ── Persist conversation state to DB (fire-and-forget) ─────────────────────
   const saveConversation = useCallback(async (
@@ -340,7 +302,14 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
     const storedTotal = useSearchStore.getState().cachedTotal;
     if (stored && stored.length > 0) {
       const meta = { total: storedTotal ?? stored.length, cached: false, totalPages: Math.ceil((storedTotal ?? stored.length) / 15) };
-      setResults(stored);
+      
+      // Cache these locally for instant page switching
+      const itemsPerPage = 15;
+      for (let p = 1; p <= Math.ceil(stored.length / itemsPerPage); p++) {
+        pageCacheRef.current[p] = stored.slice((p - 1) * itemsPerPage, p * itemsPerPage);
+      }
+
+      setResults(stored.slice(0, 15)); // Only show first page
       setResultsMeta(meta);
       setIsResultsView(true);
       hasRunSearchRef.current = true;
@@ -369,6 +338,22 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
     const LOW_RESULT_THRESHOLD = 15;
 
     try {
+      // Resolve required skills with robust multi-level fallback:
+      // 1. _resolution.extraction.raw_tech  (from JD extraction flow)
+      // 2. accumulated_context.technologies  (set by chat route)
+      // 3. filterState.skills               (manually set via filter modal)
+      const resolvedRequiredSkills: string[] =
+        (liveContext._resolution as any)?.extraction?.raw_tech ??
+        (liveContext as any)?.technologies ??
+        (liveContext as any)?.skills ??
+        (finalFilters as any)?.skills ??
+        [];
+
+      const resolvedIndustries: string[] =
+        (liveContext._resolution as any)?.extraction?.raw_industry ??
+        (liveContext as any)?.industry ??
+        [];
+
       const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -377,8 +362,8 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
           crustdata_filters: Object.keys(finalFilters).length > 0 ? finalFilters : undefined,
           ui_page: 1,
           search_id: useSearchStore.getState().searchId ?? undefined,
-          required_skills: (liveContext._resolution as any)?.extraction?.raw_tech ?? [],
-          search_industries: (liveContext._resolution as any)?.extraction?.raw_industry ?? [],
+          required_skills: resolvedRequiredSkills,
+          search_industries: resolvedIndustries,
           domain_cluster: (liveContext as any).domain_cluster ?? "other",
           pass_level: 1, // Always run a single pass — never auto-escalate
         }),
@@ -413,18 +398,12 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
       setCachedResults(currentFullResults, data.total, data.next_cursor);
       setLastCreditsUsed(data.credits_used);
 
-      // ── Low / zero result recovery (TALENT SCARCITY DIAGNOSIS) ─────────────
-      // If results are zero, we MUST go back to chat. 
-      // If results are > 0 but < threshold, we stay in Results View (Persistence fix)
-      // but still inject the system message so the AI generates the advice in the chat history.
+      // ── Zero result recovery (TALENT SCARCITY DIAGNOSIS) ─────────────
+      // We no longer auto-broaden and burn 12 credits. We just show the Zero Results UI.
       if (data.total === 0 && !forceBypassRef.current) {
-        const systemMsg = `[SEARCH_RESULT: 0 candidates found. Suggest broadening filtering criteria.]`;
-        setIsResultsView(false);
-        setStatus("COLLECTING");
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("nexire:inject_search_result", { detail: { message: systemMsg } }));
-        }, 150);
-        return;
+        // Just let it render the Zero Results UI below
+        setIsResultsView(true);
+        // We can still inject the zero_result_reason to chat if we want, but it's handled below
       }
 
       // If results are low but > 0, we STAY in results view but still inject context to chat
@@ -432,15 +411,14 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
         const ctx = useSearchStore.getState().accumulatedContext;
         const titleLabel = (ctx.job_titles as string[] | undefined)?.[0] ?? "this role";
         const locationLabel = (ctx.locations as string[] | undefined)?.[0] ?? "that location";
-        const industry = (ctx.industry as string[] | undefined)?.[0] ?? "Architecture and Planning";
+        const industry = (ctx.industry as string[] | undefined)?.[0] ?? "";
 
-        const systemMsg = `[SEARCH_RESULT: ${data.total} candidates found for ${titleLabel} in ${locationLabel}. INDUSTRY: ${industry}. Suggesting strategic pivots.]`;
-        
-        // DO NOT setIsResultsView(false) — keep results visible!
-        // Just inject the context for the AI to pick up on the next chat turn or in background
+        const systemMsg = `[SEARCH_RESULT: ${data.total} candidates found for ${titleLabel} in ${locationLabel}${industry ? `. INDUSTRY: ${industry}` : ""}. Suggesting strategic pivots.]`;
         window.dispatchEvent(new CustomEvent("nexire:inject_search_result", { detail: { message: systemMsg } }));
         setIsResultsView(true);
       } else {
+        // Store what was relaxed if server auto-broadened on this single pass
+        if (data.what_was_relaxed?.length > 0) setBroadenNotice(data.what_was_relaxed);
         setIsResultsView(true);
       }
 
@@ -461,8 +439,8 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
       setStatus("CONFIRMING");
       window.scrollTo({ top: 0, behavior: "smooth" });
 
-      // Persist results so history is resumable
-      persistResults(data.results, data.total, finalFilters as Record<string, unknown>);
+      // Persist results now handled by backend in the background to prevent truncation
+      // persistResults(data.results, data.total, finalFilters as Record<string, unknown>);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Search failed");
       setStatus("CONFIRMING");
@@ -474,12 +452,17 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
 
   // ── Called by SearchTerminal when background single-call is done ──────────
   const handleResultsReady = useCallback((r: unknown[], total: number) => {
-    setResults(r as ScoredCandidate[]);
+    const list = r as ScoredCandidate[];
+    // Cache all pages for instant switching
+    const itemsPerPage = 15;
+    for (let p = 1; p <= Math.ceil(list.length / itemsPerPage); p++) {
+      pageCacheRef.current[p] = list.slice((p - 1) * itemsPerPage, p * itemsPerPage);
+    }
+
+    setResults(list.slice(0, 15)); // Fix: only show first page
     setResultsMeta({ total, cached: false, totalPages: Math.ceil(total / 15) });
-    // Also persist these results
-    const filtersUsed = (useSearchStore.getState().accumulatedContext._resolvedFilters ?? {}) as Record<string, unknown>;
-    persistResults(r, total, filtersUsed);
-  }, [persistResults]);
+    // Also persist these results — now handled by backend
+  }, []);
 
   // ── JD extraction → pre-fill FilterModal ────────────────────────────────
   const handleJDExtracted = (extractedFilters: ProspeoFilters, meta: unknown) => {
@@ -489,14 +472,42 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
   };
 
   // ── Start a completely fresh new search ────────────────────────────────
-  const clearAll = useCallback(() => {
+  const clearAll = useCallback(async () => {
     const pid = useSearchStore.getState().projectId || initialProjectId;
+    
+    // 1. Optimistically clear the UI to hide old results immediately
+    resetSearch();
+    setIsResultsView(false);
+    setResults(null);
+    setFilters({});
+    setResultsMeta(null);
+    setMode("idle");
+    
+    // 2. Perform soft-navigation via Next.js router instead of hard reload
+    // Create the search record client-side to avoid Next.js server-side redirects
     if (pid) {
-      window.location.href = `/search?project_id=${pid}`;
+      try {
+        const res = await fetch(`/api/projects/${pid}/searches`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "New Search" }),
+        });
+        const data = await res.json();
+        if (data.search?.id) {
+          setSearchId(data.search.id);
+          window.dispatchEvent(new CustomEvent("searchRename", { detail: { id: data.search.id, title: "New Search" } }));
+          // Note: using window.history.pushState instead of router.push prevents Next.js from triggering Server Components and causing a full page load.
+          window.history.pushState(null, "", `/search?project_id=${pid}&search_id=${data.search.id}`);
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to optimistically create search", e);
+      }
+      window.history.pushState(null, "", `/search?project_id=${pid}`);
     } else {
-      window.location.href = "/search";
+      window.history.pushState(null, "", "/search");
     }
-  }, [initialProjectId]);
+  }, [initialProjectId, router, resetSearch, setSearchId]);
 
   const handleEditFilters = () => {
     const resolvedFils = accumulatedContext._resolvedFilters as ProspeoFilters | undefined;
@@ -522,6 +533,13 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
     // Reset guard after 3 seconds
     setTimeout(() => { isRunningSearchRef.current = false; }, 3000);
   };
+
+  // Handle global "startNewSearch" events from Sidebar/Topbar
+  useEffect(() => {
+    const handleNewSearchEvent = () => clearAll();
+    window.addEventListener("startNewSearch", handleNewSearchEvent);
+    return () => window.removeEventListener("startNewSearch", handleNewSearchEvent);
+  }, [clearAll]);
 
   // ── Pagination orchestrator ──────────────────────────────────────────────
   const handlePageChange = useCallback(async (newPage: number) => {
@@ -789,6 +807,56 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
             )}
           </div>
 
+          {/* ── Broaden Notice Banner ── */}
+          <AnimatePresence>
+            {broadenNotice && broadenNotice.length > 0 && (
+              <motion.div
+                key="broaden-notice"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="flex items-start gap-3 bg-amber-50 border-b border-amber-200 px-6 py-3 flex-shrink-0"
+              >
+                <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-semibold text-amber-800">Search automatically broadened to find results. </span>
+                  <span className="text-xs text-amber-700">
+                    Relaxed: {broadenNotice.join(" · ")}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBroadenNotice(null)}
+                  className="text-amber-400 hover:text-amber-600 transition-colors shrink-0"
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Reality Check Banner (< 5 Results) ── */}
+          <AnimatePresence>
+            {resultsMeta && resultsMeta.total > 0 && resultsMeta.total < 5 && !searching && (
+              <motion.div
+                key="reality-check"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="flex items-start gap-3 bg-indigo-50 border-b border-indigo-200 px-6 py-3 flex-shrink-0"
+              >
+                <span className="text-xl shrink-0 mt-0.5">🧐</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-indigo-900">Reality Check: Only {resultsMeta.total} profiles found. </span>
+                  <span className="text-sm text-indigo-800">
+                    This is likely a supply pipeline problem (Talent Scarcity), not a search problem. Your requirements may be too rigid for the active market.
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* ── Results area ── */}
           <div className="flex-1 overflow-hidden w-full">
             {searching ? (
@@ -841,12 +909,27 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
                   >
                     Adjust Filters Manually
                   </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm("This will execute a broader search and cost 3 credits. Proceed?")) {
+                        // Triggers a pass_level: 2 or 3 manual search. We will just set passes by updating the store or directly fetch
+                        // In reality, user should just adjust filters, but if they want the AI to relax:
+                        setStatus("SEARCHING");
+                        passLevelRef.current = 4; // Minimal filters
+                        handleExecuteSearch();
+                      }
+                    }}
+                    className="px-4 py-2.5 text-sm font-semibold rounded-lg transition w-full bg-brand-50 text-brand-600 border border-brand-200 hover:bg-brand-100"
+                  >
+                    Auto-Broaden Search
+                  </button>
                 </div>
               </div>
             ) : results ? (
               <div className="flex flex-col h-full bg-white">
                 <SearchResults 
                   results={results}
+                  totalCount={resultsMeta?.total}
                   searchId={searchId ?? undefined}
                   titleKeywords={[
                     ...((accumulatedContext.job_titles as string[] | undefined) ?? []),
@@ -922,7 +1005,14 @@ export function SearchClient({ initialProjectId, initialProjectTitle, initialSea
                 }
                 if (Array.isArray(countData.results)) {
                   setCachedResults(countData.results, countData.total, countData.next_cursor);
-                  setResults(countData.results);
+                  
+                  // Cache these locally for instant page switching
+                  const itemsPerPage = 15;
+                  for (let p = 1; p <= Math.ceil(countData.results.length / itemsPerPage); p++) {
+                    pageCacheRef.current[p] = countData.results.slice((p - 1) * itemsPerPage, p * itemsPerPage);
+                  }
+
+                  setResults(countData.results.slice(0, 15)); // Fix: only show first page
                   setResultsMeta({ total: countData.total, cached: false, totalPages: countData.total_pages || 1 });
                   setUiPage(countData.ui_page || 1);
                 }

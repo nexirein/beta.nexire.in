@@ -1,14 +1,14 @@
 "use client";
 // nexire-app — app/(app)/search/CandidateDrawer.tsx
 // Full-viewport right-side drawer for candidate Quick Preview.
-// Overlays the ENTIRE dashboard (Sidebar + Topbar + content) via fixed z-50.
-// Left side dims but stays fully readable — no blur.
+// Can be used either as part of a flex split layout or as a fixed overlay.
 
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { CandidateProfilePanel } from "./CandidateProfilePanel";
 import type { ScoredCandidate } from "@/lib/ai/scorer";
+import { cn } from "@/lib/utils";
 
 interface CandidateDrawerProps {
   candidate: ScoredCandidate | null;
@@ -20,6 +20,7 @@ interface CandidateDrawerProps {
   onNext?: () => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  isOverlay?: boolean;
 }
 
 export function CandidateDrawer({
@@ -32,6 +33,7 @@ export function CandidateDrawer({
   onNext,
   hasPrev,
   hasNext,
+  isOverlay = false,
 }: CandidateDrawerProps) {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -49,30 +51,20 @@ export function CandidateDrawer({
     <AnimatePresence>
       {isOpen && candidate && (
         <>
-          {/* Backdrop — dims dashboard but NO blur so left content stays readable */}
-          <motion.div
-            key="drawer-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-40"
-            style={{ background: "rgba(15, 22, 41, 0.38)" }}
-            onClick={onClose}
-          />
-
-          {/* Drawer panel — slides in from right, sits above full dashboard */}
+          {/* Sidebar panel — either split view or fixed overlay */}
           <motion.div
             key="drawer-panel"
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", stiffness: 340, damping: 32, mass: 0.85 }}
-            className="fixed right-0 top-0 h-full bg-white border-l border-gray-100 z-50 flex flex-col transition-all"
-            style={{
-              width: "min(560px, 45vw)",
-              boxShadow: "-8px 0 40px rgba(0,0,0,0.08)",
-            }}
+            initial={isOverlay ? { x: "100%", opacity: 0.5 } : { opacity: 0 }}
+            animate={isOverlay ? { x: 0, opacity: 1 } : { opacity: 1 }}
+            exit={isOverlay ? { x: "100%", opacity: 0 } : { opacity: 0 }}
+            transition={{ duration: isOverlay ? 0.3 : 0.15, ease: isOverlay ? [0.16, 1, 0.3, 1] : "easeInOut" }}
+            className={cn(
+              "h-full bg-white flex flex-col min-w-0",
+              isOverlay 
+                ? "fixed top-0 right-0 w-[55%] xl:w-[50%] max-w-[900px] z-50 shadow-2xl border-l border-gray-200"
+                : "flex-1"
+            )}
+            onClick={e => e.stopPropagation()}
           >
             {/* ── Top control bar ───────────────────────────────────────── */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0">

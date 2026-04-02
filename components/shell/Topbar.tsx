@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ChevronRight, Plus, Palette, Zap } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/lib/hooks/useUser";
@@ -22,6 +22,7 @@ interface TopbarProps {
 export function Topbar({ breadcrumb, onNewSearch }: TopbarProps) {
   const { profile, org } = useUser();
   const router = useRouter();
+  const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const { lastCreditsUsed, projectId } = useSearchStore();
 
@@ -84,11 +85,17 @@ export function Topbar({ breadcrumb, onNewSearch }: TopbarProps) {
 
         {/* New Search */}
         <button
-          onClick={handleNewSearch}
-          className="flex items-center gap-1.5 rounded-xl bg-brand-500 px-4 py-1.5 text-xs font-semibold text-white shadow-sm shadow-brand-500/20 transition-all hover:bg-brand-600 active:scale-95"
+          onClick={() => {
+            if (pathname === "/search") {
+              window.dispatchEvent(new CustomEvent("startNewSearch"));
+            } else {
+              router.push("/search");
+            }
+          }}
+          className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1"
         >
           <Plus className="h-3.5 w-3.5" />
-          New Search
+          <span className="hidden sm:inline">New Search</span>
         </button>
 
         {/* Credits badge */}

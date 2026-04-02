@@ -563,6 +563,7 @@ export function SearchTerminal({ onEditFilters, onOpenJD, onRunSearch, onResults
         isOpen={drawerOpen}
         candidate={selectedCandidate}
         onClose={() => setDrawerOpen(false)}
+        isOverlay={true}
       />
     </div>
   );

@@ -480,9 +480,9 @@ export function Sidebar() {
   );
 }
 
-// ─── SearchesSection Sub-Component ────────────────────────────────────────────
 function SearchesSection({ activeProjectId, recentSearches, setRecentSearches, isActive, setHistoryModalOpen }: SearchesSectionProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -524,8 +524,11 @@ function SearchesSection({ activeProjectId, recentSearches, setRecentSearches, i
         </div>
         <button
           onClick={() => {
-            const url = activeProjectId ? `/search?project_id=${activeProjectId}&t=${Date.now()}` : `/search?t=${Date.now()}`;
-            window.location.href = url;
+            if (pathname === "/search") {
+              window.dispatchEvent(new CustomEvent("startNewSearch"));
+            } else {
+              router.push(activeProjectId ? `/search?project_id=${activeProjectId}` : "/search");
+            }
           }}
           className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-500 text-white hover:bg-brand-600 transition-colors shadow-sm"
           title="New Search"

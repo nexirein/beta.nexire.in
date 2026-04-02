@@ -1,6 +1,8 @@
-import React, { useState, useRef } from "react";
-import { Check, Plus, Zap, SkipForward, Crosshair, Layers, Globe } from "lucide-react";
+import React, { useState, useRef, useCallback } from "react";
+import { Check, Plus, Zap, SkipForward, Crosshair, Layers, Globe, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
+import { useFilterState } from "@/lib/hooks/useFilterState";
 import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 export interface WidgetOption {
   field: string;
@@ -44,7 +46,6 @@ const INTENT_CONFIG: Record<string, { icon: React.ReactNode; color: string; bord
 export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled }: WidgetRendererProps) {
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
-  // Track which custom additions just animated (for success feedback)
   const [justAdded, setJustAdded] = useState<Record<string, string | null>>({});
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -52,7 +53,8 @@ export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled 
 
   const autoGroup = widgetData.find((w) => w.field === "auto");
   const intentGroup = widgetData.find((w) => w.field === "search_intent");
-  const regularGroups = widgetData.filter((w) => w.field !== "auto" && w.field !== "search_intent");
+  const rankingWidget = widgetData.find(w => w.field === "ranking_priority");
+  const regularGroups = widgetData.filter((w) => w.field !== "auto" && w.field !== "search_intent" && w.field !== "ranking_priority");
 
   const toggleSelection = (field: string, option: string) => {
     setSelections((prev) => {
@@ -68,7 +70,6 @@ export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled 
     const val = customInputs[field]?.trim();
     if (!val) return;
     toggleSelection(field, val);
-    // Trigger success flash
     setJustAdded((prev) => ({ ...prev, [field]: val }));
     setTimeout(() => setJustAdded((prev) => ({ ...prev, [field]: null })), 1500);
     setCustomInputs((prev) => ({ ...prev, [field]: "" }));
@@ -76,15 +77,13 @@ export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled 
   };
 
   const handleConfirm = () => onSelectCallback(selections);
-
   const handleAutoFill = () => onSelectCallback({ auto: ["⚡ Auto-fill best options"] });
 
-  // Search intent chips fire immediately (single-select, no "Apply" needed)
   const handleIntentSelect = (option: string) => {
     onSelectCallback({ search_intent: [option] });
   };
 
-  const hasSelections = Object.values(selections).some((arr) => arr.length > 0);
+  const hasSelections = Object.values(selections).some((arr: any) => Array.isArray(arr) && arr.length > 0);
 
   return (
     <motion.div
@@ -166,7 +165,13 @@ export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled 
         </div>
       )}
 
-      {/* ── Regular chip groups ── */}
+      {/* ── Ranking Priority (New specialized widget) ── */}
+      {rankingWidget && (
+        <RankingPriorityChatWidget 
+          onSelect={(prio) => onSelectCallback({ ranking_priority: prio })}
+          disabled={disabled}
+        />
+      )}
       {regularGroups.map((widget, idx) => {
         const selectedForField = selections[widget.field] || [];
         const customItems = selectedForField.filter(s => !widget.options.includes(s));
@@ -304,5 +309,123 @@ export function WidgetRenderer({ widgetData, onSelectCallback, onSkip, disabled 
         )}
       </div>
     </motion.div>
+  );
+}
+
+function RankingPriorityChatWidget({ 
+  onSelect, 
+  disabled 
+}: { 
+  onSelect: (prio: string[]) => void;
+  disabled?: boolean;
+}) {
+  const { filters, setFilter } = useFilterState();
+  const priority = (filters.ranking_priority || ["titles", "skills", "location", "experience"]) as string[];
+
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const moveLeft = (index: number) => {
+    if (index <= 0) return;
+    const newPriority = [...priority];
+    [newPriority[index - 1], newPriority[index]] = [newPriority[index], newPriority[index - 1]];
+    setFilter("ranking_priority", newPriority);
+    
+    // Debounce the actual search trigger to save credits
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onSelect(newPriority);
+    }, 1500);
+  };
+
+  const moveRight = (index: number) => {
+    if (index >= priority.length - 1) return;
+    const newPriority = [...priority];
+    [newPriority[index + 1], newPriority[index]] = [newPriority[index], newPriority[index + 1]];
+    setFilter("ranking_priority", newPriority);
+    
+    // Debounce the actual search trigger to save credits
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onSelect(newPriority);
+    }, 1500);
+  };
+
+  const getLabel = (id: string) => {
+    switch (id) {
+      case "titles": return "Job Titles";
+      case "skills": return "Key Skills";
+      case "experience": return "Exp";
+      case "location": return "Loc";
+      default: return id;
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 p-4 rounded-2xl border border-brand-100 bg-brand-50/20 shadow-sm relative overflow-hidden">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ranking Order</span>
+        <span className="text-[9px] text-slate-400 italic">Tap arrows to prioritize</span>
+      </div>
+
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <AnimatePresence mode="popLayout">
+          {priority.map((id, index) => {
+            const isFirst = index === 0;
+            const isLast = index === priority.length - 1;
+            
+            return (
+              <motion.div
+                key={id}
+                layout
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-200 bg-white min-w-[110px] shrink-0",
+                  isFirst ? "border-blue-300 shadow-sm ring-1 ring-blue-50/50" : "border-slate-200",
+                  disabled && "opacity-50 pointer-events-none"
+                )}
+              >
+                <div className={cn(
+                  "w-5 h-5 rounded flex items-center justify-center text-[10px] font-black shrink-0",
+                  isFirst ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-400"
+                )}>
+                  {index + 1}
+                </div>
+
+                <span className={cn(
+                  "text-[11px] font-bold truncate flex-1",
+                  isFirst ? "text-slate-900" : "text-slate-600"
+                )}>
+                  {getLabel(id)}
+                </span>
+
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => moveLeft(index)}
+                    disabled={isFirst || disabled}
+                    className={cn(
+                      "p-1 rounded-md transition-colors",
+                      isFirst ? "text-slate-200" : "text-slate-400 hover:bg-slate-50 hover:text-blue-600"
+                    )}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => moveRight(index)}
+                    disabled={isLast || disabled}
+                    className={cn(
+                      "p-1 rounded-md transition-colors",
+                      isLast ? "text-slate-200" : "text-slate-400 hover:bg-slate-50 hover:text-blue-600"
+                    )}
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { Loader2, Pencil, ChevronDown, ChevronUp, ArrowRight, X, ChevronRight, Sparkles, Target, Gauge, LayoutGrid } from "lucide-react";
+import { Loader2, Pencil, ChevronDown, ChevronUp, ArrowRight, X, ChevronRight, Sparkles, Target, Gauge, LayoutGrid, Briefcase, MapPin, Building2, LayoutList } from "lucide-react";
 import { useSearchStore } from "@/lib/store/search-store";
+import { useFilterState } from "@/lib/hooks/useFilterState";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import CountUp from "react-countup";
@@ -27,6 +28,7 @@ const FilterChip = ({
   onRemove,
   isBottleneck = false,
   title,
+  icon,
 }: { 
   label: string; 
   variant?: 'default' | 'brand' | 'success' | 'warning' | 'ghost';
@@ -34,6 +36,7 @@ const FilterChip = ({
   onRemove?: () => void;
   isBottleneck?: boolean;
   title?: string;
+  icon?: React.ReactNode;
 }) => (
   <motion.div 
     initial={{ opacity: 0, scale: 0.9 }}
@@ -48,6 +51,7 @@ const FilterChip = ({
       variant === 'warning' || isBottleneck ? "bg-orange-50 text-orange-700 border-orange-200" : ""
     )}
   >
+    {icon}
     <span className="truncate max-w-[120px]">{label}</span>
     {isBottleneck && (
       <span title="High restrictiveness" className="bg-orange-500 w-1.5 h-1.5 rounded-full -ml-0.5" aria-hidden="true" />
@@ -113,6 +117,9 @@ export function FilterSummaryCard({
     setIsEstimatingMatches
   } = useSearchStore();
 
+  const { filters: filterState } = useFilterState();
+  const priority = filterState.ranking_priority || ["titles", "skills", "location", "experience"];
+
   const isHistorical = !!historicalData && !isLatest;
   const estimatedMatches = isHistorical ? historicalData.total : storeEstimatedMatches;
   const cachedResults = isHistorical ? historicalData.results : storeCachedResults;
@@ -121,9 +128,11 @@ export function FilterSummaryCard({
   const isEstimatingMatches = isHistorical ? false : storeIsEstimating;
   const cardStatus = isHistorical ? "CONFIRMING" : status;
 
+  const hasResults = Array.isArray(cachedResults) && cachedResults.length > 0;
+  
   const [previewOpen, setPreviewOpen] = useState(true);
   const [justLoadedCount, setJustLoadedCount] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(isLatest);
+  const [isExpanded, setIsExpanded] = useState(isLatest && (!hasResults || isResolvingFilters));
   const [inputValue, setInputValue] = useState("");
   const [drawerCandidate, setDrawerCandidate] = useState<ScoredCandidate | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -181,12 +190,12 @@ export function FilterSummaryCard({
       return cleanCity;
     };
     const regionStr = typeof fs.region === "string" ? fs.region : null;
-    const radiusMiles = typeof fs.radius_miles === "number" ? fs.radius_miles : 30;
+    const radiusKm = typeof fs.radius_km === "number" ? fs.radius_km : 50;
     const rawLocCtx = Array.isArray(accumulatedContext.locations) ? (accumulatedContext.locations as string[]) : [];
     const extractedLoc = typeof (extractionData as Record<string, unknown>).raw_location === "string" 
       ? [(extractionData as Record<string, unknown>).raw_location as string] : [];
     const locationItems = regionStr 
-      ? [{ label: formatLocationLabel(regionStr), tooltip: [regionStr, `Within ${radiusMiles} mi`] }]
+      ? [{ label: formatLocationLabel(regionStr), tooltip: [regionStr, `Within ${radiusKm} km`] }]
       : rawLocCtx.length > 0 
         ? rawLocCtx.map((l) => ({ label: formatLocationLabel(l), tooltip: [l] })) 
         : extractedLoc.map((l) => ({ label: formatLocationLabel(l), tooltip: [l] }));
@@ -285,7 +294,6 @@ export function FilterSummaryCard({
       || "Ready";
 
   const isReady = isHistorical ? true : (!isEstimatingMatches && !isResolvingFilters);
-  const hasResults = Array.isArray(cachedResults) && cachedResults.length > 0;
   const previewCandidates = hasResults ? (cachedResults as ScoredCandidate[]).slice(0, 3) : [];
   
   // FIX 4: Expansion resolution suggestion
@@ -456,15 +464,12 @@ export function FilterSummaryCard({
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-1.5 mt-1 text-[11px] text-gray-500 font-medium">
-              <span>{primaryMetroLabel}</span>
-              <span className="text-gray-300">·</span>
-              <span>{display.expYears || "Any exp"}</span>
+            <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] font-semibold text-gray-500">
+              {display.primaryJobTitles.length > 0 && <span className="flex items-center gap-1"><Briefcase className="w-3 h-3 text-brand-400" /> {display.primaryJobTitles.length} Roles</span>}
+              {display.locationItems.length > 0 && <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-brand-400" /> {display.locationItems.length} Locations</span>}
+              {display.expYears && <span className="flex items-center gap-1">⏱️ {display.expYears} exp</span>}
               {display.industries.length > 0 && (
-                <>
-                  <span className="text-gray-300">·</span>
-                  <span className="truncate max-w-[100px]">{display.industries[0]}</span>
-                </>
+                <span className="truncate max-w-[100px] flex items-center gap-1"><Building2 className="w-3 h-3 text-brand-400" /> {display.industries[0]}</span>
               )}
             </div>
           </div>
@@ -607,9 +612,10 @@ export function FilterSummaryCard({
                       ))}
                       {display.similarJobTitles.map((title, i) => (
                         <FilterChip 
-                          key={i} 
+                          key={`similar-${i}`} 
                           label={title} 
                           variant="ghost" 
+                          icon={<Sparkles className="w-2.5 h-2.5 text-brand-400" />}
                         />
                       ))}
                     </div>
@@ -776,6 +782,38 @@ export function FilterSummaryCard({
                       </div>
                     </div>
                   )}
+
+                  {/* Ranking Priority Summary */}
+                  <div className="col-span-2 mt-2 pt-3 border-t border-gray-100">
+                    <div className="flex items-center gap-2 mb-2">
+                       <LayoutList className="w-3 h-3 text-brand-400" />
+                       <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Calculated Priority</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                      {priority.map((id: string, idx: number) => {
+                        const label = id === "titles" ? "Titles" : id === "skills" ? "Skills" : id === "location" ? "Location" : "Experience";
+                        return (
+                          <React.Fragment key={id}>
+                            <div className={cn(
+                              "flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold border shadow-sm",
+                              idx === 0 ? "bg-brand-50 text-brand-700 border-brand-200" : "bg-gray-50 text-gray-500 border-gray-200"
+                            )}>
+                              <span className={cn(
+                                "w-4 h-4 rounded-sm flex items-center justify-center text-[8px]",
+                                idx === 0 ? "bg-brand-500 text-white" : "bg-gray-200 text-gray-600"
+                              )}>
+                                {idx + 1}
+                              </span>
+                              {label}
+                            </div>
+                            {idx < priority.length - 1 && (
+                              <ArrowRight className="w-2.5 h-2.5 text-gray-300" />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Compact Preview (Top 3) */}
@@ -886,6 +924,7 @@ export function FilterSummaryCard({
       onClose={() => setDrawerOpen(false)}
       onSequenceEnroll={() => {}}
       onRevealSuccess={() => {}}
+      isOverlay={true}
     />
     </>  
   );

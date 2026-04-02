@@ -48,9 +48,55 @@ const FUNCTION_CATEGORIES = [
 ];
 
 const HEADCOUNT_RANGES = [
-  "1-10", "11-50", "51-200", "201-500",
+  "Self-employed", "1-10", "11-50", "51-200", "201-500",
   "501-1,000", "1,001-5,000", "5,001-10,000", "10,001+",
 ];
+
+// Ordered indices for cumulative-upward display logic
+const HEADCOUNT_ORDER_IDX: Record<string, number> = Object.fromEntries(
+  HEADCOUNT_RANGES.map((r, i) => [r, i])
+);
+
+const DEGREE_LEVELS = [
+  "High School / Secondary",
+  "Diploma / Associate's",
+  "Bachelor's",
+  "Postgraduate Diploma (PGD)",
+  "Master's",
+  "MBA",
+  "PhD / Doctorate",
+  "Professional Qualification",
+];
+
+// Grouped field-of-study options for structured selection
+const FIELD_OF_STUDY_GROUPS: Record<string, string[]> = {
+  "Architecture & Design": [
+    "Architecture", "Urban Planning", "Interior Design",
+    "Landscape Architecture", "Industrial Design", "Urban Design",
+  ],
+  "Engineering": [
+    "Civil Engineering", "Mechanical Engineering", "Electrical Engineering",
+    "Chemical Engineering", "Computer Science & Engineering",
+    "Structural Engineering", "Environmental Engineering",
+  ],
+  "Business": [
+    "Business Administration", "Finance", "Marketing", "Economics",
+    "Human Resources", "Supply Chain Management", "Accounting",
+  ],
+  "Technology": [
+    "Computer Science", "Information Technology", "Data Science",
+    "Artificial Intelligence", "Cybersecurity", "Software Engineering",
+  ],
+  "Healthcare & Science": [
+    "Medicine", "Pharmacy", "Life Sciences", "Biotechnology",
+    "Nursing", "Psychology", "Public Health",
+  ],
+  "Social Sciences & Law": [
+    "Law", "Political Science", "Sociology", "Economics",
+    "International Relations", "Journalism", "Mass Communication",
+  ],
+};
+
 
 const COMPANY_TYPES = [
   "Privately Held", "Public Company", "Self Employed",
@@ -64,7 +110,7 @@ const PROFILE_LANGUAGES = [
   "Korean", "Japanese", "Romanian", "Swedish",
 ];
 
-const RADIUS_STEPS = [5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200];
+const RADIUS_STEPS = [10, 20, 30, 40, 50, 75, 100, 150, 200, 250, 500];
 
 // ─── Category Config ──────────────────────────────────────────────────────────
 
@@ -273,12 +319,21 @@ function TagInput({
 
 // ─── Section Components ───────────────────────────────────────────────────────
 
+import { RankingPrioritySelector, RankingCriterion } from "./RankingPrioritySelector";
+
 function GeneralSection({
   filters, setFilter
 }: { filters: CrustDataFilterState; setFilter: ReturnType<typeof useFilterState>["setFilter"] }) {
   return (
     <div className="space-y-5">
       <div>
+        <RankingPrioritySelector 
+          priorityVars={(filters.ranking_priority as RankingCriterion[]) || ["titles", "skills", "experience", "location"]}
+          onChange={(newPriority) => setFilter("ranking_priority", newPriority)}
+        />
+      </div>
+
+      <div className="pt-2">
         <SectionTitle>Years of Experience</SectionTitle>
         <div className="flex items-center gap-3">
           <NumberInput
@@ -337,7 +392,7 @@ function GeneralSection({
 function LocationsSection({
   filters, setFilter
 }: { filters: CrustDataFilterState; setFilter: ReturnType<typeof useFilterState>["setFilter"] }) {
-  const radiusMiles = filters.radius_miles ?? 30;
+  const radiusKm = filters.radius_km ?? 50;
 
   return (
     <div className="space-y-6">
@@ -363,12 +418,12 @@ function LocationsSection({
             type="range"
             min={0}
             max={RADIUS_STEPS.length - 1}
-            value={RADIUS_STEPS.indexOf(radiusMiles) === -1 ? 5 : RADIUS_STEPS.indexOf(radiusMiles)}
-            onChange={(e) => setFilter("radius_miles", RADIUS_STEPS[Number(e.target.value)])}
+            value={RADIUS_STEPS.indexOf(radiusKm) === -1 ? 4 : RADIUS_STEPS.indexOf(radiusKm)}
+            onChange={(e) => setFilter("radius_km", RADIUS_STEPS[Number(e.target.value)])}
             className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#E8ECFF] accent-[#4C6DFD]"
           />
           <span className="min-w-[70px] rounded-full bg-[#EEF2FF] px-3 py-1 text-center text-xs font-semibold text-[#4C6DFD]">
-            {radiusMiles} mi
+            {radiusKm} km
           </span>
         </div>
       </div>
@@ -667,15 +722,67 @@ function JobSection({
 function CompanySection({
   filters, setFilter
 }: { filters: CrustDataFilterState; setFilter: ReturnType<typeof useFilterState>["setFilter"] }) {
+  const matchMode = filters.company_match_mode ?? "strict";
+
   return (
     <div className="space-y-6">
+      {/* Include Companies with intent toggle */}
       <div>
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-widest text-[#6B7280]">
+            Include Companies
+          </span>
+          {/* Intent mode toggle */}
+          <div className="flex rounded-full border border-[#E8ECFF] overflow-hidden text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setFilter("company_match_mode", "strict")}
+              className={cn(
+                "px-3 py-1.5 transition-all",
+                matchMode === "strict"
+                  ? "bg-[#4C6DFD] text-white"
+                  : "bg-white text-[#6B7280] hover:bg-[#EEF2FF] hover:text-[#4C6DFD]"
+              )}
+            >
+              Strict
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter("company_match_mode", "boost")}
+              className={cn(
+                "px-3 py-1.5 border-l border-[#E8ECFF] transition-all",
+                matchMode === "boost"
+                  ? "bg-[#4C6DFD] text-white"
+                  : "bg-white text-[#6B7280] hover:bg-[#EEF2FF] hover:text-[#4C6DFD]"
+              )}
+            >
+              Boost
+            </button>
+          </div>
+        </div>
+        {/* Mode explanation banner */}
+        <div className={cn(
+          "mb-3 rounded-xl border px-4 py-2.5 text-xs leading-relaxed transition-all",
+          matchMode === "strict"
+            ? "border-[#C7D2FE] bg-[#EEF2FF] text-[#4C6DFD]"
+            : "border-[#D1FAE5] bg-[#ECFDF5] text-[#059669]"
+        )}>
+          {matchMode === "strict" ? (
+            <>
+              <strong>Strict mode:</strong> Search returns <em>only</em> candidates currently employed at these companies.
+            </>
+          ) : (
+            <>
+              <strong>Boost mode:</strong> Search returns all relevant candidates, but those from these companies are ranked higher.
+            </>
+          )}
+        </div>
         <CrustDataAutocomplete
           fieldType="company"
-          label="Include Companies"
+          label=""
           value={filters.company_names ?? []}
           onChange={(v) => setFilter("company_names", v)}
-          placeholder="e.g. Google, Microsoft"
+          placeholder="e.g. Google, Microsoft, Infosys"
           maxValues={10}
         />
       </div>
@@ -704,24 +811,61 @@ function CompanySection({
         />
       </div>
 
+      {/* Headcount — cumulative-upward selection */}
       <div>
-        <SectionTitle>Company Size (Headcount)</SectionTitle>
-        <div className="flex flex-wrap gap-2">
-          {HEADCOUNT_RANGES.map((h) => (
-            <ChipToggle
-              key={h}
-              label={h}
-              active={(filters.company_headcount_range ?? []).includes(h)}
-              onClick={() => {
-                const current = filters.company_headcount_range ?? [];
-                setFilter(
-                  "company_headcount_range",
-                  current.includes(h) ? current.filter((x) => x !== h) : [...current, h]
-                );
-              }}
-            />
-          ))}
+        <div className="mb-3">
+          <SectionTitle>Company Size (Headcount)</SectionTitle>
+          <p className="text-[11px] text-[#9CA3AF] mt-0.5">
+            Selecting a size automatically <strong>includes all larger companies</strong> too — this is a minimum floor, not a restriction.
+          </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+          {HEADCOUNT_RANGES.map((h) => {
+            const selectedRanges = filters.company_headcount_range ?? [];
+            // A range is "explicitly selected" if the user clicked it
+            const isExplicitlySelected = selectedRanges.includes(h);
+            // A range is "auto-included" if it is above the lowest explicitly-selected band
+            const lowestSelectedIdx = selectedRanges.length > 0
+              ? Math.min(...selectedRanges.map((r) => HEADCOUNT_ORDER_IDX[r] ?? 999))
+              : 999;
+            const thisIdx = HEADCOUNT_ORDER_IDX[h] ?? 0;
+            const isAutoIncluded = !isExplicitlySelected && thisIdx > lowestSelectedIdx;
+
+            return (
+              <button
+                key={h}
+                type="button"
+                onClick={() => {
+                  // Toggle: if it's already explicitly selected, remove it
+                  if (isExplicitlySelected) {
+                    const next = selectedRanges.filter((x) => x !== h);
+                    setFilter("company_headcount_range", next);
+                  } else {
+                    // Add it — the floor logic in filter-builder handles expansion
+                    setFilter("company_headcount_range", [...selectedRanges, h]);
+                  }
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-150 border",
+                  isExplicitlySelected
+                    ? "bg-[#4C6DFD] text-white border-[#4C6DFD] shadow-[0_0_12px_rgba(76,109,253,0.3)]"
+                    : isAutoIncluded
+                      ? "bg-[#EEF2FF] text-[#4C6DFD] border-[#C7D2FE] opacity-60"
+                      : "bg-white border-[#E8ECFF] text-[#374151] hover:border-[#4C6DFD] hover:text-[#4C6DFD]"
+                )}
+              >
+                {isExplicitlySelected && <Check className="h-3 w-3" />}
+                {isAutoIncluded && <span className="text-[#4C6DFD]/70 font-normal">✓</span>}
+                {h}
+              </button>
+            );
+          })}
+        </div>
+        {(filters.company_headcount_range ?? []).length > 0 && (
+          <p className="mt-2 text-[11px] text-[#4C6DFD]">
+            ✦ Also automatically includes all larger company sizes above your selection.
+          </p>
+        )}
       </div>
 
       <div>
@@ -876,6 +1020,33 @@ function SkillsSection({
 function EducationSection({
   filters, setFilter
 }: { filters: CrustDataFilterState; setFilter: ReturnType<typeof useFilterState>["setFilter"] }) {
+  const [fieldSearch, setFieldSearch] = useState("");
+  const [showFieldDropdown, setShowFieldDropdown] = useState(false);
+  const fieldRef = useRef<HTMLDivElement>(null);
+
+  // Close field-of-study dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (fieldRef.current && !fieldRef.current.contains(e.target as Node)) setShowFieldDropdown(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const selectedDegrees = filters.education_degree ?? [];
+  const selectedFields = filters.education_field_of_study ?? [];
+
+  // Filter groups by search query
+  const filteredGroups = Object.entries(FIELD_OF_STUDY_GROUPS).reduce(
+    (acc, [group, fields]) => {
+      const q = fieldSearch.toLowerCase();
+      const matched = fields.filter((f) => f.toLowerCase().includes(q));
+      if (matched.length > 0) acc[group] = matched;
+      return acc;
+    },
+    {} as Record<string, string[]>
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -890,25 +1061,138 @@ function EducationSection({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        <div>
-          <SectionTitle>Degree</SectionTitle>
-          <TagInput
-            tags={filters.education_degree ?? []}
-            onAdd={(v) => setFilter("education_degree", [...(filters.education_degree ?? []), v])}
-            onRemove={(v) => setFilter("education_degree", (filters.education_degree ?? []).filter((x) => x !== v))}
-            placeholder="e.g. Bachelor's, MBA, PhD"
+      {/* Degree Level — structured chip toggles */}
+      <div>
+        <SectionTitle note="(select all that apply)">
+          Degree Level
+        </SectionTitle>
+        <div className="flex flex-wrap gap-2">
+          {DEGREE_LEVELS.map((d) => (
+            <ChipToggle
+              key={d}
+              label={d}
+              active={selectedDegrees.includes(d)}
+              onClick={() => {
+                setFilter(
+                  "education_degree",
+                  selectedDegrees.includes(d)
+                    ? selectedDegrees.filter((x) => x !== d)
+                    : [...selectedDegrees, d]
+                );
+              }}
+            />
+          ))}
+        </div>
+        <p className="mt-1.5 text-xs text-[#9CA3AF]">
+          e.g. selecting &quot;Master&apos;s&quot; matches M.Arch, M.Tech, MSc, ME and other postgraduate degrees.
+        </p>
+      </div>
+
+      {/* Field of Study — grouped dropdown */}
+      <div ref={fieldRef} className="relative">
+        <SectionTitle>Field of Study</SectionTitle>
+        {/* Selected fields as chips */}
+        {selectedFields.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {selectedFields.map((f) => (
+              <span
+                key={f}
+                className="inline-flex items-center gap-1 rounded-full bg-[#EEF2FF] px-2.5 py-0.5 text-xs font-medium text-[#4C6DFD]"
+              >
+                {f}
+                <button
+                  type="button"
+                  onClick={() => setFilter("education_field_of_study", selectedFields.filter((x) => x !== f))}
+                  className="ml-0.5 text-[#4C6DFD]/60 hover:text-[#4C6DFD]"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {/* Search input */}
+        <div
+          className={cn(
+            "flex items-center gap-2 rounded-lg border bg-white px-3 py-2 transition-all cursor-text",
+            showFieldDropdown ? "border-[#4C6DFD] ring-2 ring-[#4C6DFD]/15" : "border-[#E8ECFF]"
+          )}
+          onClick={() => setShowFieldDropdown(true)}
+        >
+          <SearchIcon className="h-3.5 w-3.5 text-[#9CA3AF] shrink-0" />
+          <input
+            type="text"
+            value={fieldSearch}
+            onChange={(e) => { setFieldSearch(e.target.value); setShowFieldDropdown(true); }}
+            onFocus={() => setShowFieldDropdown(true)}
+            placeholder="e.g. Architecture, Computer Science, Finance..."
+            className="flex-1 bg-transparent text-sm text-[#0F1629] placeholder:text-[#9CA3AF] focus:outline-none"
           />
         </div>
-        <div>
-          <SectionTitle>Field of Study</SectionTitle>
-          <TagInput
-            tags={filters.education_field_of_study ?? []}
-            onAdd={(v) => setFilter("education_field_of_study", [...(filters.education_field_of_study ?? []), v])}
-            onRemove={(v) => setFilter("education_field_of_study", (filters.education_field_of_study ?? []).filter((x) => x !== v))}
-            placeholder="e.g. Computer Science, Finance"
-          />
-        </div>
+        {/* Grouped dropdown */}
+        <AnimatePresence>
+          {showFieldDropdown && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-[#E8ECFF] bg-white shadow-[0_8px_32px_rgba(76,109,253,0.12)]"
+            >
+              {Object.entries(filteredGroups).map(([group, fields]) => (
+                <div key={group}>
+                  <div className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-[#9CA3AF]">
+                    {group}
+                  </div>
+                  {fields.map((field) => {
+                    const isSelected = selectedFields.includes(field);
+                    return (
+                      <button
+                        key={field}
+                        type="button"
+                        onMouseDown={() => {
+                          if (!isSelected) {
+                            setFilter("education_field_of_study", [...selectedFields, field]);
+                          }
+                          setFieldSearch("");
+                          setShowFieldDropdown(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-between px-4 py-2 text-sm transition-colors",
+                          isSelected
+                            ? "bg-[#EEF2FF] text-[#4C6DFD]"
+                            : "text-[#374151] hover:bg-[#F8F9FF] hover:text-[#4C6DFD]"
+                        )}
+                      >
+                        <span>{field}</span>
+                        {isSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+              {Object.keys(filteredGroups).length === 0 && (
+                <div className="px-4 py-4 text-center text-sm text-[#9CA3AF]">
+                  No matches — type any field to add it as a custom entry
+                </div>
+              )}
+              {/* Custom free-text entry */}
+              {fieldSearch.trim().length >= 2 && !selectedFields.includes(fieldSearch.trim()) && (
+                <button
+                  type="button"
+                  onMouseDown={() => {
+                    setFilter("education_field_of_study", [...selectedFields, fieldSearch.trim()]);
+                    setFieldSearch("");
+                    setShowFieldDropdown(false);
+                  }}
+                  className="flex w-full items-center gap-2 border-t border-[#F3F4F6] px-4 py-3 text-sm text-[#4C6DFD] hover:bg-[#EEF2FF] transition-colors"
+                >
+                  <span className="font-medium">+ Add &quot;{fieldSearch.trim()}&quot;</span>
+                  <span className="text-[#9CA3AF] text-xs">(custom entry)</span>
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -1029,9 +1313,9 @@ function ActiveFilterBadges({ filters }: { filters: CrustDataFilterState }) {
   if (filters.regions?.length) {
     const firstRegion = filters.regions[0];
     const restCount = filters.regions.length - 1;
-    chips.push(`📍 ${formatRegionLabel(firstRegion)}${restCount > 0 ? ` +${restCount}` : ""}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
+    chips.push(`📍 ${formatRegionLabel(firstRegion)}${restCount > 0 ? ` +${restCount}` : ""}${filters.radius_km ? ` (${filters.radius_km}km)` : ""}`);
   } else if (filters.region) {
-    chips.push(`📍 ${formatRegionLabel(filters.region)}${filters.radius_miles ? ` (${filters.radius_miles}mi)` : ""}`);
+    chips.push(`📍 ${formatRegionLabel(filters.region)}${filters.radius_km ? ` (${filters.radius_km}km)` : ""}`);
   }
   if (filters.seniority?.length) chips.push(...filters.seniority.slice(0, 2));
   if (filters.company_industries?.length) chips.push(...filters.company_industries.slice(0, 1).map(i => `Industry: ${i}`));

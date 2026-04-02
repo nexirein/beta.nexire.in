@@ -28,6 +28,7 @@ function isActive(value: unknown): boolean {
 }
 
 const STORAGE_KEY = "nexire_filter_state_v2";
+const PRIORITY_KEY = "nexire_default_ranking_priority";
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
@@ -36,11 +37,23 @@ export function useFilterState(initial: Partial<CrustDataFilterState> = {}) {
     if (typeof window === "undefined") return {};
     try {
       const s = sessionStorage.getItem(STORAGE_KEY);
-      return s ? JSON.parse(s) : {};
+      const parsed = s ? JSON.parse(s) : {};
+      
+      // Load global default for priority if not in session
+      if (!parsed.ranking_priority) {
+        const globalPrio = localStorage.getItem(PRIORITY_KEY);
+        if (globalPrio) parsed.ranking_priority = JSON.parse(globalPrio);
+      }
+      
+      return parsed;
     } catch { return {}; }
   })();
 
-  const [filters, setFilters] = useState<CrustDataFilterState>({ ...stored, ...initial });
+  const [filters, setFilters] = useState<CrustDataFilterState>({ 
+    ranking_priority: ["titles", "skills", "location", "experience"],
+    ...stored, 
+    ...initial 
+  });
 
   const setFilter = useCallback(<K extends keyof CrustDataFilterState>(
     key: K,
@@ -48,7 +61,13 @@ export function useFilterState(initial: Partial<CrustDataFilterState> = {}) {
   ) => {
     setFilters((prev) => {
       const next = { ...prev, [key]: value };
-      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* ok */ }
+      try { 
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next)); 
+        // Persist priority globally
+        if (key === "ranking_priority") {
+          localStorage.setItem(PRIORITY_KEY, JSON.stringify(value));
+        }
+      } catch { /* ok */ }
       return next;
     });
   }, []);
@@ -68,8 +87,9 @@ export function useFilterState(initial: Partial<CrustDataFilterState> = {}) {
   }, []);
 
   const getActiveFilterCount = useCallback(() => {
-    const { cursor, ...rest } = filters;
+    const { cursor, company_match_mode, ...rest } = filters;
     void cursor;
+    void company_match_mode;
     return Object.values(rest).filter(isActive).length;
   }, [filters]);
 

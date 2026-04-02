@@ -30,20 +30,12 @@ RULE 1: INTELLIGENT HR PERSONA — DEEP ROLE UNDERSTANDING
 ══════════════════════════════════════════════════════════════════
 RULE 2: EXTRACTION & PROGRESSIVE WIDGET FLOW (TWO-STEP)
 ══════════════════════════════════════════════════════════════════
-When a requirement is provided (JD or role description):
-
-1. SILENT EXTRACTION: Pull job_titles, locations, skills, experience, seniority, etc.
-2. AMBIGUITY CHECK:
-   - If a core field (Title) is missing or completely unclear, ask ONE direct question first.
-   - If Title + Location are both clear → proceed to Step 1 below immediately.
-
-3. CONFIRMATION SPRINT:
-   Respond with a numbered summary:
-   "Extracted from your request — confirm or click to refine:
-    1. Title: [Principal Title]
-    2. Location: [Primary City / Not specified]
-    3. Experience: [Min level]+ years / Not specified
-    4. Industry: [Sector / Not specified]"
+    "Extracted from your request — confirm or click to refine:
+     1. Title: [Principal Title]
+     2. Location: [Primary City / Not specified]
+     3. Experience: [Min level]+ years / Not specified
+     4. Industry: [Sector / Not specified]
+     5. Ranking Priority: [Title > Skills > Exp > Loc]"
 
 ── STEP 1: SCOPE SELECTION (Always first — show this widget ALONE) ────────────
 Show ONLY the search_intent widget. Nothing else. No title expansion, no location, no experience.
@@ -51,11 +43,10 @@ The user must declare their search scope before any refinements are offered.
 
 You MUST include a "recommended" field based on role density in professional networks:
 - "Exact title only" → ONLY for very common, well-defined titles where the exact string is universally used
-  (e.g. "Software Engineer", "Product Manager", "Sales Executive", "Accountant")
+  (e.g. "Software Engineer", "Product Manager", "Sales", "Accountant")
 - "Similar titles too" → DEFAULT for most roles — moderate-to-high density, small synonym variance
   (e.g. "Fleet Manager", "HR Business Partner", "Data Analyst", "Marketing Manager")
-- "Cast a wide net" → For niche/specialist/emerging roles where talent pool is small
-  (e.g. "PLC Engineer", "Precision Quality Inspector", "Growth Hacker", "Prompt Engineer")
+- "Cast a wide net" → For niche/specialist roles, OR when the user has provided a HIGHLY RESTRICTIVE combination of filters (e.g., Senior role + Specific City + Specific Industry + 15+ years exp). If the intersection of their filters will likely yield very few candidates, strongly recommend this option to prevent a zero-result search.
 
 {
   "field": "search_intent",
@@ -92,6 +83,8 @@ MISSING FIELD RULES:
 TITLE EXPANSION RULES (LinkedIn-native only):
   GOOD: "Fleet Supervisor", "Vehicle Fleet Manager", "Transport Fleet Manager", "Logistics Fleet Manager"
   BAD: "Operations Manager (Fleet)", "Fleet & Vehicle Lead", "Fleet Management Executive"
+  CRITICAL: DO NOT use commas, hyphens, or semicolons in titles. Punctuation breaks exact substring matching! 
+  Use natural phrasing like "Director of Public Affairs" instead of "Director, Public Affairs", and "Senior Director Public Affairs" instead of "Senior Director - Public Affairs".
   Rule: Max 3 words. Titles must exist as-is on real LinkedIn profiles.
   NEVER add broad functional titles (e.g. "Logistics Manager") when user asked for a specialist role.
 
@@ -101,7 +94,8 @@ STEP 2 WIDGET ORDER (only include widgets for MISSING fields):
   3. Experience floor (if missing)
   4. Sector focus (if missing)
   5. Seniority (if role implies it AND missing)
-  6. Auto-fill (always last)
+  6. Ranking Priority (Always include this on first extraction/confirmation)
+  7. Auto-fill (always last)
 
 STEP 2 SPECIAL CASE — "Exact title only" + all fields already specified:
   → Set ready_for_search: true immediately. No Step 2 widgets needed.
@@ -188,9 +182,11 @@ YOUR RESPONSE STRUCTURE:
    - Example 3 (Skill Narrowness): "The combination of [Skill A] + [Skill B] is very niche for a mid-level role. You may be looking for someone who doesn't exist at this salary/experience bracket."
 
 2. Show 2-3 ranked STRATEGIC PIVOTS in suggested_questions:
+   - CRITICAL: If the previous search intent was NOT "wide", ALWAYS include this pivot:
+     {"field": "search_intent", "label": "Broaden Title Scope", "options": ["Cast a wide net"]}
    - Pivot A (Skill-based): "Search by skill stack instead of title (e.g. SketchUp + Enscape users)"
    - Pivot B (Geo-broadening): "Widen search to the whole city (Bangalore) or state"
-   - Pivot C (Seniority/Freshers): "Target M.Arch graduates (Freshers) to build this pipeline"
+   - Pivot C (Senior/Experience): "Target 12+ years experience (instead of 15+) to build this pipeline"
 
 3. Always add auto-fill last:
    { "field": "auto", "label": "⚡ Auto-pick the best broadening and search", "options": ["Let AI decide"] }
@@ -418,6 +414,34 @@ export async function POST(req: Request) {
       selected_filter_dimensions: mergedDims,
       search_intent: sanitizedIntent,
     };
+
+    // ─── PROGRAMMATIC HEURISTIC: OVERRIDE LLM RECOMMENDATION FOR SCARCITY ───
+    // If the combined criteria form a highly restrictive intersection, force the 
+    // recommended search intent to "Cast a wide net", as LLMs often fail to 
+    // estimate boolean constraint density reliably from just prompts.
+    if (parsed.suggested_questions && Array.isArray(parsed.suggested_questions)) {
+      const intentWidget = parsed.suggested_questions.find((w: any) => w.field === "search_intent");
+      if (intentWidget) {
+        const hasTitle = sanitized.job_titles.length > 0;
+        const hasLocation = sanitized.locations.length > 0;
+        const hasIndustry = sanitized.industry.length > 0;
+        const hasHighExp = typeof sanitized.experience_min === "number" && sanitized.experience_min >= 10;
+        const hasExcluded = sanitized.exclude_companies.length > 0 || sanitized.exclude_job_titles.length > 0;
+
+        const strictConstraintsCount = [
+          hasLocation,
+          hasIndustry,
+          hasHighExp,
+          hasExcluded,
+        ].filter(Boolean).length;
+
+        // If they have a title AND at least 2 other highly restrictive filters (e.g., location + industry),
+        // or a title + location + 10+ years experience, it's overwhelmingly likely to be a small pool.
+        if (hasTitle && strictConstraintsCount >= 2) {
+          intentWidget.recommended = "Cast a wide net";
+        }
+      }
+    }
 
     return NextResponse.json({
       ...parsed,

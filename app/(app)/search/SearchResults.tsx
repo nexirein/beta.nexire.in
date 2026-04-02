@@ -1,14 +1,17 @@
 "use client";
 /**
- * SearchResults.tsx — Juicebox-inspired split-panel candidate list
+ * SearchResults.tsx — Clean split-panel candidate list
  *
- * Left panel: Rich candidate rows with:
- *   - Name + LinkedIn icon (official color)
- *   - {Title} at {Company} · {Location}  (with company logo inline)
- *   - Education institute (with logo below)
- *   - AI score pill on the right
- *   - AI Insight (streamed, highlighted)
- * Right panel: CandidateDrawer — full-viewport overlay
+ * Left panel: Structured candidate rows (no profile photos):
+ *   - Rank + Name + LinkedIn icon + X.com icon
+ *   - Title at Company · Location
+ *   - Education
+ *   - SKILLS section (labeled)
+ *   - SIGNALS section (labeled)
+ *   - AI INSIGHT section (labeled, via InsightText)
+ *
+ * Right panel: CandidateDrawer (fixed overlay, no backdrop dimming)
+ * Auto-scrolls left list when navigating profiles via drawer
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -25,7 +28,6 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { sanitizeTitle } from "@/lib/utils/sanitizeTitle";
 import { CompanyHoverCard } from "@/components/search/CompanyHoverCard";
-import { getProxiedImageUrl } from "@/lib/utils/image-proxy";
 
 /** How many profiles are revealed per batch before the next group streams in */
 const BATCH_SIZE = 5;
@@ -45,18 +47,32 @@ function LinkedInLogo({ className = "w-3.5 h-3.5" }: { className?: string }) {
   );
 }
 
+// X.com icon using local asset
+function XLogo({ size = 14, className = "" }: { size?: number; className?: string }) {
+  return (
+    <img
+      src="/assets/logos/twitter.webp"
+      alt="X (Twitter)"
+      width={size}
+      height={size}
+      className={`object-contain flex-shrink-0 ${className}`}
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
 // ── Inline company logo ──────────────────────────────────────────────────────
-function CompanyLogo({ domain, name, size = 16 }: { domain?: string | null; name: string; size?: number }) {
+function CompanyLogo({ domain, name, size = 18 }: { domain?: string | null; name: string; size?: number }) {
   const [failed, setFailed] = useState(false);
   const clean = domain?.replace(/^https?:\/\//, "").replace(/\/.*$/, "").trim();
   const initials = name.split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
   if (clean && !failed) {
     return (
       <img
-        src={`https://img.logo.dev/${clean}?token=${LOGO_DEV_KEY}&size=32`}
+        src={`https://img.logo.dev/${clean}?token=${LOGO_DEV_KEY}&size=40`}
         alt={name}
         width={size} height={size}
-        className="rounded object-contain bg-white border border-gray-100 flex-shrink-0"
+        className="rounded-sm object-contain bg-white border border-gray-100 flex-shrink-0"
         style={{ width: size, height: size }}
         onError={() => setFailed(true)}
       />
@@ -64,16 +80,16 @@ function CompanyLogo({ domain, name, size = 16 }: { domain?: string | null; name
   }
   return (
     <div
-      className="rounded bg-indigo-50 border border-indigo-100 flex items-center justify-center flex-shrink-0"
+      className="rounded-sm bg-indigo-50 border border-indigo-100 flex items-center justify-center flex-shrink-0"
       style={{ width: size, height: size }}
     >
-      <span className="text-[8px] font-bold text-indigo-500 leading-none">{initials.charAt(0) || "?"}</span>
+      <span className="text-[8px] font-bold text-indigo-600">{initials.charAt(0) || "?"}</span>
     </div>
   );
 }
 
 // ── Institute avatar (small) ─────────────────────────────────────────────────
-function InstituteAvatar({ logoUrl, name, size = 14 }: { logoUrl?: string | null; name: string; size?: number }) {
+function InstituteAvatar({ logoUrl, name, size = 16 }: { logoUrl?: string | null; name: string; size?: number }) {
   const [failed, setFailed] = useState(false);
   const [fallbackDomain, setFallbackDomain] = useState<string | null>(LOGO_SEARCH_CACHE[name] || null);
   const [loadingFallback, setLoadingFallback] = useState(false);
@@ -94,85 +110,50 @@ function InstituteAvatar({ logoUrl, name, size = 14 }: { logoUrl?: string | null
     return <img src={logoUrl} alt={name} width={size} height={size} className="rounded-sm object-contain bg-white border border-gray-100 flex-shrink-0" style={{ width: size, height: size }} onError={() => setFailed(true)} />;
   }
   if (fallbackDomain) {
-    return <img src={`https://img.logo.dev/${fallbackDomain}?token=${LOGO_DEV_KEY}&size=32`} alt={name} width={size} height={size} className="rounded-sm object-contain bg-white border border-gray-100 flex-shrink-0" style={{ width: size, height: size }} onError={() => setFallbackDomain(null)} />;
+    return <img src={`https://img.logo.dev/${fallbackDomain}?token=${LOGO_DEV_KEY}&size=40`} alt={name} width={size} height={size} className="rounded-sm object-contain bg-white border border-gray-100 flex-shrink-0" style={{ width: size, height: size }} onError={() => setFallbackDomain(null)} />;
   }
   return (
     <div
       className="rounded-sm bg-violet-50 border border-violet-100 flex items-center justify-center flex-shrink-0"
       style={{ width: size, height: size }}
     >
-      <span className="text-[7px] font-bold text-violet-500 leading-none">{initials.charAt(0) || "?"}</span>
-    </div>
-  );
-}
-
-// ── Profile avatar ───────────────────────────────────────────────────────────
-function ProfileAvatar({ url, permalink, name, size = 32 }: { url?: string | null; permalink?: string | null; name: string; size?: number }) {
-  const [src, setSrc] = useState<string | null>(url ?? null);
-  const [usedPermalink, setUsedPermalink] = useState(false);
-  const initials = name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
-  if (src) {
-    const proxiedSrc = getProxiedImageUrl(src);
-    return (
-      <img src={proxiedSrc ?? ""} alt={name} width={size} height={size}
-        className="rounded-full object-cover ring-2 ring-indigo-50 flex-shrink-0"
-        style={{ width: size, height: size }}
-        onContextMenu={(e) => e.preventDefault()}
-        draggable={false}
-        onError={() => {
-          if (!usedPermalink && permalink) { setUsedPermalink(true); setSrc(permalink); }
-          else setSrc(null);
-        }}
-      />
-    );
-  }
-  return (
-    <div
-      className="rounded-full bg-gradient-to-br from-indigo-50 to-indigo-100 border border-indigo-200 flex items-center justify-center font-bold text-indigo-600 flex-shrink-0"
-      style={{ width: size, height: size, fontSize: size * 0.33 }}
-    >
-      {initials || "?"}
+      <span className="text-[7px] font-bold text-violet-600 leading-none">{initials.charAt(0) || "?"}</span>
     </div>
   );
 }
 
 // ── Score pill ───────────────────────────────────────────────────────────────
 function ScorePill({ score }: { score: number }) {
-  if (score >= 80) return (
-    <div className="flex flex-col items-end gap-0.5">
-      <span className="text-[13px] font-bold text-emerald-700 tabular-nums leading-none">{score}</span>
-      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-emerald-600 uppercase tracking-wide">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-        Excellent
+  const renderPill = (color: string, bg: string, border: string, dot: string, label: string) => (
+    <div className="flex flex-col items-end relative cursor-default">
+      <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-widest border", color, bg, border)}>
+        <span className={cn("w-1.5 h-1.5 rounded-full", dot)} />
+        {label}
       </span>
     </div>
   );
-  if (score >= 65) return (
-    <div className="flex flex-col items-end gap-0.5">
-      <span className="text-[13px] font-bold text-indigo-700 tabular-nums leading-none">{score}</span>
-      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-indigo-600 uppercase tracking-wide">
-        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
-        Strong
-      </span>
-    </div>
-  );
-  if (score >= 50) return (
-    <div className="flex flex-col items-end gap-0.5">
-      <span className="text-[13px] font-bold text-amber-700 tabular-nums leading-none">{score}</span>
-      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-amber-600 uppercase tracking-wide">
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-        Good
-      </span>
-    </div>
-  );
+
+  if (score >= 80) return renderPill("text-emerald-700", "bg-emerald-50", "border-emerald-100", "bg-emerald-500 shadow-sm shadow-emerald-500/50", "Strong Match");
+  if (score >= 65) return renderPill("text-indigo-700",  "bg-indigo-50",  "border-indigo-100",  "bg-indigo-500",  "Good Match");
+  if (score >= 45) return renderPill("text-amber-700",   "bg-amber-50",   "border-amber-100",   "bg-amber-400",   "Moderate Match");
+  return             renderPill("text-gray-500",   "bg-gray-50",    "border-gray-200",    "bg-gray-300",    "Weak Match");
+}
+
+
+// ── Section label chip ───────────────────────────────────────────────────────
+function SectionLabel({ label, color = "gray" }: { label: string; color?: "gray" | "indigo" | "emerald" }) {
+  const styles = {
+    gray:    "text-gray-400 bg-gray-50 border-gray-100",
+    indigo:  "text-indigo-400 bg-indigo-50/50 border-indigo-100/50",
+    emerald: "text-emerald-500 bg-emerald-50 border-emerald-100",
+  };
   return (
-    <div className="flex flex-col items-end gap-0.5">
-      <span className="text-[13px] font-bold text-gray-500 tabular-nums leading-none">{score}</span>
-      <span className="flex items-center gap-0.5 text-[9px] font-semibold text-gray-400 uppercase tracking-wide">
-        <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />
-        Potential
-      </span>
-    </div>
+    <span className={cn(
+      "inline-block text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded border leading-tight",
+      styles[color]
+    )}>
+      {label}
+    </span>
   );
 }
 
@@ -196,9 +177,8 @@ const listItem = {
 
 interface SearchResultsProps {
   results: ScoredCandidate[];
-  /** ID of the current search_conversation — used for AI insight SSE + cache */
+  totalCount?: number;
   searchId?: string;
-  /** Keywords from the search intent for highlighting */
   titleKeywords?: string[];
   skillKeywords?: string[];
   pagination?: {
@@ -213,6 +193,7 @@ interface SearchResultsProps {
 
 export function SearchResults({
   results,
+  totalCount,
   pagination,
   searchId,
   titleKeywords = [],
@@ -225,13 +206,14 @@ export function SearchResults({
   const [drawerCandidate, setDrawerCandidate] = useState<ScoredCandidate | null>(null);
   const [drawerIdx, setDrawerIdx] = useState<number | null>(null);
 
+  // ── Scrollable list ref for auto-scroll ──────────────────────────────────
+  const listScrollRef = useRef<HTMLDivElement>(null);
+
   // ── Batch progressive loading — reveal BATCH_SIZE profiles at a time ─────
-  // visibleCount starts at BATCH_SIZE and grows by BATCH_SIZE every 1.5s
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
   const batchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // ── Insight enable gate — a card's insight only starts when visible ───────
-  // We track which person_ids have their insights enabled
+  // ── Insight enable gate ───────────────────────────────────────────────────
   const [insightEnabled, setInsightEnabled] = useState<Set<string>>(new Set());
 
   // Portal-based Hover Card State
@@ -242,7 +224,6 @@ export function SearchResults({
 
   useEffect(() => {
     setLocalResults(results);
-    // Reset batch reveal whenever results change
     setVisibleCount(BATCH_SIZE);
     setInsightEnabled(new Set());
     if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
@@ -253,7 +234,7 @@ export function SearchResults({
     if (visibleCount >= localResults.length) return;
     batchTimerRef.current = setTimeout(() => {
       setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, localResults.length));
-    }, 1600); // stagger 1.6s between batches
+    }, 1600);
     return () => {
       if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
     };
@@ -269,6 +250,15 @@ export function SearchResults({
       return next;
     });
   }, [visibleCount, localResults, searchId]);
+
+  // ── Auto-scroll list when navigating via drawer ──────────────────────────
+  useEffect(() => {
+    if (drawerIdx === null) return;
+    const row = document.getElementById(`candidate-row-${drawerIdx}`);
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [drawerIdx]);
 
   const handleRevealSuccess = (personId: string, type: "email" | "phone", data: { email?: string; phone?: string }) => {
     setLocalResults((prev: ScoredCandidate[]) =>
@@ -287,7 +277,7 @@ export function SearchResults({
     showTimeoutRef.current = setTimeout(() => {
       setHoverAnchorRect(rect);
       setHoveredCompanyIdx(idx);
-    }, 400); // 400ms intentional delay to avoid flicker when moving through list
+    }, 400);
   };
 
   const handleCompanyMouseLeave = () => {
@@ -298,28 +288,25 @@ export function SearchResults({
     }, 150);
   };
 
-
-
   const drawerOpen = drawerCandidate !== null;
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full w-full relative overflow-hidden bg-gray-50/50">
       {/* ── Left: Candidate List ──────────────────────────────────────────── */}
-      <div
+      <div 
         className={cn(
-          "flex flex-col border-r border-gray-200 bg-white overflow-hidden transition-all duration-300",
-          drawerOpen ? "w-[55%] flex-shrink-0" : "flex-1"
+          "flex flex-col bg-white overflow-hidden transition-all duration-300 ease-in-out",
+          drawerOpen ? "w-[45%] xl:w-[45%] border-r border-gray-200" : "w-full"
         )}
       >
         {/* List header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 bg-gray-50/50 flex-shrink-0">
           <div className="flex items-center gap-2.5">
-            <span className="text-[14px] font-bold text-gray-900">
-              {localResults.length} Matches
+            <span className="text-[14.5px] font-bold text-gray-900">
+              {(totalCount ?? pagination?.total ?? localResults.length).toLocaleString()} Matches
             </span>
             <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full shadow-sm">
-              <Sparkles className="w-2.5 h-2.5" />
-              AI Ranked
+              Ranked by Relevance
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -330,7 +317,7 @@ export function SearchResults({
         </div>
 
         {/* Rows */}
-        <div className="flex-1 overflow-y-auto bg-gray-50/20">
+        <div ref={listScrollRef} className="flex-1 overflow-y-auto bg-gray-50/20">
           <motion.div
             initial="hidden"
             animate="show"
@@ -349,8 +336,9 @@ export function SearchResults({
               const headcount = emp0?.company_headcount_range ?? emp0?.company_headcount_latest ?? null;
               const industry = emp0?.company_industries?.[0] ?? null;
               const seniority = emp0?.seniority_level ?? null;
-              const companyLinkedin = emp0?.company_linkedin_url ?? emp0?.linkedin_url ?? null;
+              const companyLinkedin = emp0?.company_linkedin_profile_url ?? emp0?.company_linkedin_url ?? emp0?.linkedin_url ?? null;
               const companyWebsite = emp0?.company_website ?? (companyDomain ? `https://${companyDomain}` : undefined);
+              const twitterHandle: string | null = raw.twitter_handle || null;
 
               const hasContact = !!(c.email || c.phone);
               const locationStr = [c.location_city, c.location_state, c.location_country].filter(Boolean).join(", ");
@@ -358,27 +346,37 @@ export function SearchResults({
 
               // Only render up to visibleCount (progressive batch loading)
               if (idx >= visibleCount) {
-                // For cards beyond current batch, show skeleton placeholder
+                // Show skeleton only for the next BATCH_SIZE beyond visibleCount
+                if (idx >= visibleCount + BATCH_SIZE) return null;
                 return (
                   <div
                     key={`skeleton-${idx}`}
-                    className="px-5 py-3.5 border-b border-gray-100 animate-pulse flex items-start gap-3.5"
+                    className="px-5 py-4 border-b border-gray-200 animate-pulse"
                   >
-                    <div className="w-5 pt-2 flex-shrink-0">
-                      <div className="w-3 h-2.5 bg-gray-100 rounded" />
-                    </div>
-                    <div className="w-10 h-10 rounded-full bg-gray-100 flex-shrink-0" />
-                    <div className="flex-1 space-y-2 pt-1">
-                      <div className="w-2/5 h-3.5 bg-gray-100 rounded-full" />
-                      <div className="w-3/5 h-2.5 bg-gray-100 rounded-full" />
-                      <div className="w-1/3 h-2.5 bg-gray-100 rounded-full" />
-                      {/* Insight skeleton */}
-                      <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
-                        <div className="w-full h-2 bg-gray-100 rounded-full" />
-                        <div className="w-4/5 h-2 bg-gray-100 rounded-full" />
+                    {/* No avatar in skeleton — matches new avatar-free layout */}
+                    <div className="flex items-start gap-3">
+                      <div className="w-5 pt-1 flex-shrink-0">
+                        <div className="w-3 h-2.5 bg-gray-100 rounded" />
                       </div>
+                      <div className="flex-1 space-y-2.5 pt-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2/5 h-4 bg-gray-100 rounded-full" />
+                          <div className="w-5 h-3 bg-gray-100 rounded" />
+                        </div>
+                        <div className="w-3/5 h-3 bg-gray-100 rounded-full" />
+                        <div className="w-1/3 h-2.5 bg-gray-100 rounded-full" />
+                        <div className="mt-3 pt-2.5 border-t border-gray-100 space-y-2">
+                          <div className="flex gap-1.5">
+                            <div className="w-20 h-5 bg-gray-100 rounded-full" />
+                            <div className="w-24 h-5 bg-gray-100 rounded-full" />
+                            <div className="w-16 h-5 bg-gray-100 rounded-full" />
+                          </div>
+                          <div className="w-full h-2 bg-gray-100 rounded-full" />
+                          <div className="w-4/5 h-2 bg-gray-100 rounded-full" />
+                        </div>
+                      </div>
+                      <div className="w-12 h-7 bg-gray-100 rounded-lg flex-shrink-0" />
                     </div>
-                    <div className="w-10 h-7 bg-gray-100 rounded-lg flex-shrink-0" />
                   </div>
                 );
               }
@@ -393,16 +391,16 @@ export function SearchResults({
                     setDrawerIdx(idx);
                   }}
                   className={cn(
-                    "w-full text-left px-5 py-3.5 border-b border-gray-100 transition-colors duration-150 relative group",
+                    "w-full text-left px-5 py-5 border-b border-gray-200 transition-colors duration-150 relative group",
                     "border-l-[3px]",
                     isSelected
                       ? "bg-indigo-50/60 border-l-indigo-600 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)]"
-                      : "bg-white hover:bg-gray-50 border-l-transparent"
+                      : "bg-white hover:bg-gray-50/70 border-l-transparent"
                   )}
                 >
-                  <div className="flex items-start gap-3.5">
+                  <div className="flex items-start gap-3">
                     {/* Rank */}
-                    <div className="w-5 pt-[10px] flex-shrink-0 text-center">
+                    <div className="w-5 pt-[11px] flex-shrink-0 text-center">
                       <span className={cn(
                         "text-[10.5px] font-mono tabular-nums",
                         isSelected ? "text-indigo-400 font-semibold" : "text-gray-300"
@@ -411,23 +409,13 @@ export function SearchResults({
                       </span>
                     </div>
 
-                    {/* Avatar */}
-                    <div className="flex-shrink-0 pt-0.5">
-                      <ProfileAvatar
-                        url={raw.profile_picture_url}
-                        permalink={raw.profile_picture_permalink}
-                        name={c.full_name}
-                        size={40}
-                      />
-                    </div>
-
-                    {/* Main content */}
+                    {/* Main content — no avatar */}
                     <div className="flex-1 min-w-0">
 
                       {/* Name row */}
-                      <div className="flex items-center gap-1.5 mb-0.5">
+                      <div className="flex items-center gap-2 mb-1">
                         <span className={cn(
-                          "text-[14.5px] font-bold leading-tight truncate tracking-tight delay-100 transition-colors",
+                          "text-[15.5px] font-bold leading-tight truncate tracking-tight transition-colors",
                           isSelected ? "text-indigo-800" : "text-gray-900 group-hover:text-indigo-700"
                         )}>
                           {c.full_name}
@@ -435,6 +423,12 @@ export function SearchResults({
                         {c.linkedin_url && (
                           <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="flex-shrink-0 text-[#0A66C2]/70 hover:text-[#0A66C2] transition-colors">
                             <LinkedInLogo className="w-4 h-4" />
+                          </a>
+                        )}
+                        {twitterHandle && (
+                          <a href={`https://x.com/${twitterHandle}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                            className="flex-shrink-0 opacity-75 hover:opacity-100 transition-opacity" title={`@${twitterHandle} on X`}>
+                            <XLogo size={14} />
                           </a>
                         )}
                         {hasContact && (
@@ -448,31 +442,31 @@ export function SearchResults({
                       </div>
 
                       {/* Title at Company · Location */}
-                      <div className="mt-1 flex items-center text-[12px] text-gray-500 flex-wrap">
-                        {displayTitle && <span className="font-medium text-gray-700">{displayTitle}</span>}
-                        {displayTitle && c.current_company && <span className="mx-1 text-gray-400">at</span>}
+                      <div className="flex items-center text-[12.5px] flex-wrap gap-x-1 mt-0.5">
+                        {displayTitle && <span className="font-semibold text-gray-800">{displayTitle}</span>}
+                        {displayTitle && c.current_company && <span className="text-gray-400">at</span>}
                         {c.current_company && (
                           <div className="flex min-w-0 items-center">
                             <button
                               onMouseEnter={(e) => handleCompanyMouseEnter(e, idx)}
                               onMouseLeave={handleCompanyMouseLeave}
                               onClick={e => e.stopPropagation()}
-                              className="inline-flex min-w-0 items-center gap-1.5 text-indigo-700 font-semibold hover:text-indigo-800 hover:underline transition-colors"
+                              className="inline-flex min-w-0 items-center gap-1.5 text-indigo-700 font-semibold hover:text-indigo-900 hover:underline transition-colors"
                             >
-                              <CompanyLogo domain={companyDomain} name={c.current_company} size={16} />
+                              <CompanyLogo domain={companyDomain} name={c.current_company} size={18} />
                               <span className="truncate flex-1 min-w-0 block">{c.current_company}</span>
                             </button>
                           </div>
                         )}
                         {locationStr && (
-                          <span className="text-[11.5px] text-gray-400 ml-1.5 flex items-center gap-0.5 border-l border-gray-200 pl-1.5 flex-shrink-0">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
+                          <span className="text-[11.5px] text-gray-500 ml-1 flex items-center gap-0.5 border-l border-gray-200 pl-1.5 flex-shrink-0">
+                            <MapPin className="w-3 h-3 flex-shrink-0 text-gray-400" />
                             <span>{locationStr}</span>
                           </span>
                         )}
                       </div>
 
-                      {/* Portal Hover Card handling */}
+                      {/* Portal Hover Card */}
                       <AnimatePresence>
                         {hoveredCompanyIdx === idx && hoverAnchorRect && (
                           <div
@@ -499,11 +493,11 @@ export function SearchResults({
                       {/* Education row */}
                       {edu0?.institute_name && (
                         <div className="flex items-center gap-1.5 mt-1.5 pl-0.5">
-                          <InstituteAvatar logoUrl={edu0.institute_logo_url} name={edu0.institute_name} size={14} />
-                          <span className="text-[11.5px] text-gray-400 leading-tight">
+                          <InstituteAvatar logoUrl={edu0.institute_logo_url} name={edu0.institute_name} size={16} />
+                          <span className="text-[12px] text-gray-600 leading-tight">
                             {edu0.degree_name
-                              ? <><span className="text-violet-600 font-medium">{edu0.degree_name}</span>{" "}<span className="text-gray-400">{edu0.institute_name}</span></>
-                              : edu0.institute_name
+                              ? <><span className="text-violet-700 font-semibold">{edu0.degree_name}</span>{" "}<span className="text-gray-500">{edu0.institute_name}</span></>
+                              : <span className="text-gray-600 font-medium">{edu0.institute_name}</span>
                             }
                           </span>
                         </div>
@@ -526,6 +520,26 @@ export function SearchResults({
                           )}
                         </div>
                       )}
+
+                      {/* AI Insight — sole sub-section */}
+                      <div className="mt-3 pt-3 border-t border-gray-100/80">
+                        <InsightText
+                          personId={c.person_id}
+                          searchId={searchId || ""}
+                          enabled={insightEnabled.has(c.person_id)}
+                          contextData={{
+                            currentTitle: c.current_title || "",
+                            currentCompany: c.current_company || "",
+                            experienceYears: c.experience_years || 0,
+                            skills: c.skills || [],
+                            educationStr: edu0?.institute_name || null,
+                            summary: raw.summary || null,
+                            ai_insight: c.ai_insight,
+                            companyType: companyType || null,
+                            industry: industry || null,
+                          }}
+                        />
+                      </div>
                     </div>
 
                     {/* Right: Score */}
@@ -538,35 +552,13 @@ export function SearchResults({
                       <ChevronRight className="w-4 h-4 text-indigo-400 flex-shrink-0 self-center opacity-80" />
                     )}
                   </div>
-
-                  {/* ── AI Insight — below the main row content ────────── */}
-                  {searchId && insightEnabled.has(c.person_id) && (
-                    <div className="pl-[76px] pr-2 pointer-events-none">
-                      <InsightText
-                        personId={c.person_id}
-                        searchId={searchId}
-                        enabled={insightEnabled.has(c.person_id)}
-                        titleKeywords={titleKeywords}
-                        skillKeywords={skillKeywords}
-                        contextData={{
-                          currentTitle: emp0?.title ?? c.current_title ?? "Unknown Title",
-                          currentCompany: emp0?.name ?? c.current_company ?? "Unknown Company",
-                          experienceYears: c.experience_years ?? 0,
-                          skills: Array.isArray(c.skills) ? c.skills.slice(0, 5) : [],
-                          educationStr: edu0 ? `${edu0.degree_name ? edu0.degree_name + " from " : ""}${edu0.institute_name ?? ""}` : null,
-                          summary: raw?.summary ?? c.headline ?? null,
-                          ai_insight: c.ai_insight
-                        }}
-                      />
-                    </div>
-                  )}
                 </motion.button>
               );
             })}
 
-            {/* Pagination... */}
+            {/* Pagination */}
             {pagination && pagination.totalPages > 1 && (
-              <div className="py-5 px-6 flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 border-t border-gray-100 bg-white">
+              <div className="py-5 px-6 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-gray-200 bg-white">
                 <div className="text-[12.5px] text-gray-500">
                   Showing{" "}
                   <span className="font-semibold text-gray-900">{(pagination.uiPage - 1) * 15 + 1}</span>
@@ -616,7 +608,7 @@ export function SearchResults({
               </div>
             )}
             
-            <div className="h-6 bg-white border-t border-gray-100" />
+            <div className="h-6 bg-white border-t border-gray-200" />
             
           </motion.div>
         </div>

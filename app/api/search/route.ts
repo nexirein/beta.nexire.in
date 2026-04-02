@@ -18,25 +18,26 @@ import { REDIS_KEYS } from "@/lib/redis/keys";
 import { checkRateLimit } from "@/lib/redis/rate-limiter";
 import { buildCacheKey, getCachedSearch, setCachedSearch } from "@/lib/redis/search-cache";
 import { executeWaterfallCrustData, paginateLocally, PAGE_SIZE } from "@/lib/waterfall-engine";
-import { buildCrustDataFilters } from "@/lib/crustdata/filter-builder";
+import { buildCrustDataFilters, buildRelaxedFilters, buildExpandedRadiusFilters, buildMinimalFilters } from "@/lib/crustdata/filter-builder";
 import type { CrustDataFilterState, CrustDataPerson } from "@/lib/crustdata/types";
 import { scoreAndRankCandidates } from "@/lib/ai/scorer";
 import { checkCredits, deductCredits } from "@/lib/credits/engine";
+import { crustdataCountSearchPeople } from "@/lib/crustdata/client";
 
 const SearchRequestSchema = z.object({
   query: z.string().default(""),
   filters: z.record(z.string(), z.unknown()).optional().default({}),
-  cursor: z.string().optional(),          // CrustData pagination cursor (null = first page)
-  ui_page: z.number().int().min(1).max(5).default(1), // Which of the 5 cached pages to show
+  cursor: z.string().optional(),
+  ui_page: z.number().int().min(1).max(5).default(1),
   debug: z.boolean().optional(),
   search_id: z.string().optional(),
   pass_level: z.number().int().min(1).max(4).optional().default(1),
-  // CrustData-style filter state (from useFilterState.toCrustDataPayload)
-  crustdata_filters: z.record(z.string(), z.unknown()).optional(),
-  // JD-derived signals for scoring only (not search filters)
+  /** When true, server auto-tries passes 1→4 until MIN_RESULTS_THRESHOLD is met. */
+  auto_broaden: z.boolean().optional().default(false),
   required_skills: z.array(z.string()).optional(),
   search_industries: z.array(z.string()).optional(),
   domain_cluster: z.string().optional(),
+  crustdata_filters: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ─── Supabase Client Helpers ─────────────────────────────────────────────────
@@ -107,12 +108,10 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const { query, filters: rawFilters, crustdata_filters, cursor, ui_page, debug, search_id, required_skills, search_industries, domain_cluster, pass_level } = parseResult.data;
+  const { query, filters: rawFilters, crustdata_filters, cursor, ui_page, debug, search_id, required_skills, search_industries, domain_cluster, pass_level, auto_broaden } = parseResult.data;
   const debugEnabled = debug === true && process.env.NODE_ENV !== "production";
 
   // ── 5. Build CrustData filter state ─────────────────────────────────────
-  // Prefer crustdata_filters (from useFilterState.toCrustDataPayload) if provided.
-  // Fallback: treat rawFilters as a partial CrustDataFilterState.
   const filterState: CrustDataFilterState = (
     crustdata_filters && Object.keys(crustdata_filters).length > 0
       ? crustdata_filters
@@ -120,7 +119,31 @@ export async function POST(req: NextRequest) {
   ) as CrustDataFilterState;
 
   const crustDataFilterTree = buildCrustDataFilters(filterState);
-  const cacheKey = buildCacheKey({ ...filterState, _cursor: cursor ?? "" }, 0);
+  void crustDataFilterTree; // used in debug only
+
+  // ── Profile quality gate ─────────────────────────────────────────────────
+  // Filter out sparse profiles that match only on title with no employment detail.
+  function passesProfileQualityGate(candidate: CrustDataPerson): boolean {
+    // Must have at least one current employer with a non-trivial title OR a headline
+    const employers = candidate.current_employers ?? [];
+    const hasRealTitle = employers.some((e) => e.title && e.title.trim().length > 3);
+    const hasHeadline = candidate.headline && candidate.headline.trim().length > 5;
+    
+    if (!hasRealTitle && !hasHeadline) return false;
+
+    // We no longer strip candidates by skills here — let the AI Scorer penalize them instead.
+    // This prevents "disappearing candidates" when the CrustData skills array is sparse.
+
+    return true;
+  }
+
+  // ── What-was-relaxed labels for each waterfall pass ───────────────────────
+  const RELAXED_LABELS: Record<number, string[]> = {
+    2: ["Seniority filter", "Job function filter", "Keyword filter"],
+    3: ["Seniority filter", "Job function filter", "Keyword filter", "Search radius expanded 5×"],
+    4: ["Seniority filter", "Job function filter", "Keyword filter", "Industry filter", "Search radius expanded to 500 mi"],
+  };
+  const cacheKey = buildCacheKey({ ...filterState, _cursor: cursor ?? "" }, 0, pass_level);
 
   // ── 6. Cache check ──────────────────────────────────────────────────────
   let allCrustDataResults: Array<CrustDataPerson & { _tier: string }> = [];
@@ -130,6 +153,8 @@ export async function POST(req: NextRequest) {
   let nextCursor: string | null = null;
   let passUsed: 1 | 2 | 3 | 4 = 1;
   let fromCache = false;
+  /** Tracks which filters were dropped during auto-broadening. Hoisted here so accessible in final response. */
+  let whatWasRelaxed: string[] = [];
 
   const cached = await getCachedSearch(cacheKey);
   if (cached && typeof cached === "object") {
@@ -149,50 +174,90 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    /** Tracks which filters were dropped during auto-broadening */
+    // NOTE: whatWasRelaxed is hoisted to outer scope — do not redeclare
+    /** The highest pass level actually used */
+    let finalPassUsed: 1 | 2 | 3 | 4 = 1;
+    const MIN_RESULTS = 15;
+
     try {
-      const waterfallResult = await executeWaterfallCrustData({
-        filterState,
-        cursor: cursor ?? null,
-        passLevel: pass_level,
-      });
+      // ── 1. Main Search Execution ──
+      // Immediately spend 3 credits to do the actual data fetch.
+      const wr = await executeWaterfallCrustData({ filterState, cursor: cursor ?? null, passLevel: pass_level });
+      allCrustDataResults = wr.results as Array<CrustDataPerson & { _tier: string }>;
+      totalCount = wr.total;
+      creditsUsed = wr.credits_used;
+      nextCursor = wr.next_cursor;
+      passUsed = wr.pass_used;
 
-      allCrustDataResults = waterfallResult.results as Array<CrustDataPerson & { _tier: string }>;
-      totalCount = waterfallResult.total;
-      creditsUsed = waterfallResult.credits_used;
-      nextCursor = waterfallResult.next_cursor;
-      passUsed = waterfallResult.pass_used;
-
+      // ── 2. Handle Zero Results & Diagnostics ──
       if (allCrustDataResults.length === 0) {
+        // Run cheap count queries stripped down to find the blocker (diagnostic only)
+        const diagnostics: Record<string, number> = {};
+        try {
+          // A: Only titles
+          const stateTitlesOnly = { titles: filterState.titles };
+          diagnostics["title_only"] = await crustdataCountSearchPeople(buildCrustDataFilters(stateTitlesOnly));
+          
+          // B: Title + Location
+          const stateTitleLoc = { titles: filterState.titles, regions: filterState.regions, radius_km: 50 };
+          diagnostics["title_location"] = await crustdataCountSearchPeople(buildCrustDataFilters(stateTitleLoc));
+        } catch (diagErr) {
+          console.error("[Search Diagnostics] Failed:", diagErr);
+        }
+
+        const activeFilters = Object.entries(filterState as Record<string, unknown>)
+          .filter(([, v]) => v !== undefined && v !== null && (!Array.isArray(v) || (v as unknown[]).length > 0))
+          .map(([k]) => k);
+          
+        const zeroDiagnostic = {
+          most_restrictive_filters: activeFilters.slice(0, 3),
+          filter_contribution: diagnostics,
+          suggestions: [
+            ...(filterState.company_names?.length ? [{ action: "remove_filter", filter: "company_names", label: "Remove Include Companies filter", estimated_gain_label: "May unlock 50–200+ candidates" }] : []),
+            ...(filterState.seniority?.length ? [{ action: "relax_filter", filter: "seniority", label: "Remove Seniority restriction", estimated_gain_label: "Typically adds 30–80% more results" }] : []),
+            { action: "expand_radius", filter: "regions", label: "Expand search radius or add nearby cities", estimated_gain_label: "+20–100 candidates typically" },
+          ],
+        };
+
         return NextResponse.json({
-          results: [],
-          total: 0,
-          ui_page,
-          credits_used: 0, // Waived if 0 profiles returned
-          fromCache: false,
-          ...(debugEnabled ? { debug: { filterState, crustDataFilterTree } } : {}),
+          results: [], total: 0, ui_page, credits_used: 0, fromCache: false,
+          pass_used: passUsed, what_was_relaxed: whatWasRelaxed, zero_result_reason: zeroDiagnostic,
+          ...(debugEnabled ? { debug: { filterState, diagnostics } } : {}),
         });
       }
 
-      // ── 8. Score & rank ALL fetched candidates ────────────────────────────
+      // ── Profile quality gate ──────────────────────────────────────────────
+      if (allCrustDataResults.length > 0) {
+        const before = allCrustDataResults.length;
+        allCrustDataResults = allCrustDataResults.filter(passesProfileQualityGate);
+        if (debugEnabled) console.log(`[Search] Quality gate: ${before} → ${allCrustDataResults.length}`);
+        
+        // Final catch: If quality gate stripped all 100 profiles, report 0
+        if (allCrustDataResults.length === 0) {
+          return NextResponse.json({
+            results: [], total: totalCount, ui_page, credits_used: 0, fromCache: false,
+            pass_used: passUsed, what_was_relaxed: whatWasRelaxed,
+            message: "All candidates filtered by quality rules.",
+          });
+        }
+      }
+
+      // ── 8. Score & rank ───────────────────────────────────────────────────
       scoredAll = scoreAndRankCandidates({
-        candidates: allCrustDataResults.map(p => ({
-          ...p,
-          raw_crustdata_json: p, // Pass full profile for advanced scoring factors
-        })) as unknown as Record<string, unknown>[],
+        candidates: allCrustDataResults.map(p => ({ ...p, raw_crustdata_json: p })) as unknown as Record<string, unknown>[],
         searchFilters: filterState,
-        primaryJobTitles: (filterState.titles ?? []),
+        primaryJobTitles: filterState.titles ?? [],
         requiredSkills: required_skills ?? [],
         searchIndustries: search_industries ?? [],
         searchDomain: domain_cluster as any,
       });
 
-      // Cache the 100 SCORED results for 30 minutes
+      // Cache scored results
       await setCachedSearch(cacheKey, { results: scoredAll, total: totalCount, next_cursor: nextCursor });
 
-      // Deduct credits if pass was made (passUsed > 0 or creditsUsed > 0 implies actual fetch)
       if (creditsUsed > 0 || passUsed > 0) {
         await deductCredits(profile.org_id, user.id, "search", `Search query: ${query || "Custom filters"}`);
-        // Invalidate credit balance cache so Topbar updates immediately
         await redis.del(REDIS_KEYS.accountCredits(profile.org_id)).catch(() => {});
       }
     } catch (err: unknown) {
@@ -381,6 +446,18 @@ export async function POST(req: NextRequest) {
               filters_json: filterState,
             });
           }
+
+          // 3. Update conversation title and status
+          const firstTitle = (filterState.titles?.[0]) || "New Search";
+          const firstLoc = (filterState.regions?.[0]) || "";
+          const newTitle = firstLoc ? `${firstTitle} · ${firstLoc}` : firstTitle;
+
+          await admin.from("search_conversations").update({
+            title: newTitle,
+            status: "CONFIRMING", // mark search as ran
+            estimated_matches: totalCount,
+            prospeo_filters: filterState // sync filters back
+          }).eq("id", search_id);
         }
       } catch (err) {
         console.error("[Search] Global people/results sync error:", err);
@@ -410,6 +487,7 @@ export async function POST(req: NextRequest) {
     total_pages: paginated.totalPages,
     next_cursor: nextCursor,
     pass_used: passUsed,
+    what_was_relaxed: whatWasRelaxed, // Which filters were relaxed (populated only in auto_broaden mode)
     fromCache,
     credits_used: creditsUsed,
     ...(debugEnabled ? { debug: { filterState, crustDataFilterTree, passUsed } } : {}),

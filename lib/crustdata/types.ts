@@ -252,7 +252,7 @@ export interface CrustDataFilterState {
   // Location (geo_distance)
   region?: string; // Kept for backwards compatibility
   regions?: string[];
-  radius_miles?: number;        // default: 30
+  radius_km?: number;           // default: 50
   exclude_regions?: string[];
   past_regions?: string[];
 
@@ -274,6 +274,7 @@ export interface CrustDataFilterState {
 
   // Company
   company_names?: string[];
+  company_match_mode?: "strict" | "boost"; // "strict" = hard filter; "boost" = score signal only
   exclude_company_names?: string[];
   company_headcount_range?: string[];
   company_type?: string[];
@@ -316,4 +317,7 @@ export interface CrustDataFilterState {
 
   // Pagination (not a filter, but stored with state)
   cursor?: string;
+
+  // Custom Ranking configuration array
+  ranking_priority?: string[];
 }

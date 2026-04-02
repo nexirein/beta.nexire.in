@@ -57,6 +57,30 @@ export async function crustdataSearchPeople(
   return data as CrustDataSearchResponse;
 }
 
+/**
+ * Pre-flight count check.
+ * Hits the PersonDB search endpoint with limit: 1 to get the total_count
+ * before committing to a 100-profile fetch which costs 3 credits.
+ */
+export async function crustdataCountSearchPeople(
+  filters: CrustDataFilterTree
+): Promise<number> {
+  const response = await fetch(`${BASE_URL}/screener/persondb/search`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ filters, limit: 1 }), // limit: 1 minimizes payload size, and likely minimizes/eliminates credit spent if only fetching total_count
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    console.error(`[CrustData count] HTTP ${response.status}:`, text);
+    return 0;
+  }
+
+  const data = await response.json();
+  return typeof data.total_count === "number" ? data.total_count : 0;
+}
+
 // ─── PersonDB Field Autocomplete ────────────────────────────────────────────
 
 /**

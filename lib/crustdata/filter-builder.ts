@@ -25,6 +25,46 @@ import type {
   CrustDataCompoundFilter,
 } from "./types";
 
+// ─── Headcount Range Order ───────────────────────────────────────────────────
+// CrustData enum values ordered from smallest to largest.
+// When a user picks a band, we include ALL bands >= that band.
+// e.g. selecting "51-200" → sends ["51-200", "201-500", "501-1,000", "1,001-5,000", ...]
+// This means we are NOT restricting by company size — just setting a MINIMUM threshold.
+const HEADCOUNT_ORDER = [
+  "Self-employed",
+  "1-10",
+  "11-50",
+  "51-200",
+  "201-500",
+  "501-1,000",
+  "1,001-5,000",
+  "5,001-10,000",
+  "10,001+",
+] as const;
+
+/**
+ * Given the user-selected headcount ranges, returns all ranges that satisfy
+ * "at least this large" semantics.
+ *
+ * If the user selected multiple bands (e.g. "51-200" AND "501-1,000"),
+ * we take the MINIMUM selected index as the floor — everything from that
+ * floor upward is included.
+ */
+function expandHeadcountUpward(selected: string[]): string[] {
+  if (selected.length === 0) return [];
+
+  // Find the lowest-index bucket the user has selected
+  const indices = selected
+    .map((s) => HEADCOUNT_ORDER.indexOf(s as (typeof HEADCOUNT_ORDER)[number]))
+    .filter((i) => i !== -1);
+
+  if (indices.length === 0) return selected; // Unknown values — pass through as-is
+
+  const lowestIdx = Math.min(...indices);
+  // Return that bucket and every bucket above it
+  return HEADCOUNT_ORDER.slice(lowestIdx);
+}
+
 // ─── Valid CrustData seniority levels ────────────────────────────────────────
 const CRUSTDATA_SENIORITY_LEVELS = new Set([
   "Owner / Partner",
@@ -271,7 +311,7 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   //   → just text-matching the city name in profile fields. We replicate this here.
   const regionsToSearch = state.regions?.length ? state.regions : (state.region ? [state.region] : []);
   if (regionsToSearch.length > 0) {
-    const radiusMiles = state.radius_miles ?? 30;
+    const radiusKm = state.radius_km ?? 50;
 
     const INDIA_SIGNALS = [
       "india", "mumbai", "delhi", "bangalore", "hyderabad", "chennai",
@@ -312,7 +352,6 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
         if (!addedCities.has(city.toLowerCase())) {
           addedCities.add(city.toLowerCase());
           locationConditions.push(simpleFilter("region", "(.)", city));
-          locationConditions.push(simpleFilter("region_address_components", "(.)", city));
         }
       }
     }
@@ -327,8 +366,8 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
         addedGeo.add(normalized);
         locationConditions.push(simpleFilter("region", "geo_distance", {
           location: loc,
-          distance: radiusMiles,
-          unit: "mi",
+          distance: radiusKm,
+          unit: "km",
         }));
       }
     }
@@ -355,13 +394,20 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
     conditions.push(fuzzyOR("all_employers.location", pastRegions));
   }
 
-  // ─── Experience & Tenure ──────────────────────────────────────────────────
+  // ─── Experience & Tenure (POST-FILTER ONLY) ───────────────────────────────
+  // REMOVED (PMF fix): CrustData's `years_of_experience_raw` is null for >80%
+  // of Indian profiles. Filtering `=> 1` drops thousands of valid matches.
+  // We instead allow all through the API, and then apply `applyHardFilters`
+  // in `scorer.ts` which safely allows `null` values through while dropping
+  // explicitly disqualified profiles.
+  /*
   if (typeof state.experience_min === "number") {
     conditions.push(simpleFilter("years_of_experience_raw", "=>", state.experience_min));
   }
   if (typeof state.experience_max === "number") {
     conditions.push(simpleFilter("years_of_experience_raw", "=<", state.experience_max));
   }
+  */
 
   if (typeof state.years_at_company_min === "number") {
     conditions.push(simpleFilter("current_employers.years_at_company_raw", "=>", state.years_at_company_min));
@@ -378,11 +424,16 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   }
 
   // ─── Skills ───────────────────────────────────────────────────────────────
-  // Skills come from CrustData autocomplete → exact values → "in" means "has at least one of these"
+  // REMOVED (PMF fix): The 'in' operator behaves as an AND logic check on CrustData,
+  // which forces candidates to have ALL requested skills, killing results for sparse
+  // Indian profiles. We drop `skills` from the primary hard-filter tree entirely,
+  // using it only for the AI ranking/scoring step post-fetch.
+  /*
   const skills = (state.skills ?? []).filter(Boolean);
   if (skills.length > 0) {
     conditions.push(simpleFilter("skills", "in", skills));
   }
+  */
 
   // ─── Seniority ────────────────────────────────────────────────────────────
   // These are CrustData enum values → "in"
@@ -395,9 +446,13 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   }
 
   // ─── Company Constraints ──────────────────────────────────────────────────
-  // Company names from autocomplete — use (.) for robustness since LinkedIn name variants exist
+  // company_match_mode:
+  //   "strict" (default) → hard CrustData filter — only returns people from these companies
+  //   "boost"             → companies are used as a scoring signal only (see scorer.ts)
+  //                         We deliberately skip adding to the filter tree here.
   const companyNames = (state.company_names ?? []).filter(Boolean);
-  if (companyNames.length > 0) {
+  const companyMatchMode = state.company_match_mode ?? "strict";
+  if (companyNames.length > 0 && companyMatchMode === "strict") {
     conditions.push(fuzzyOR("current_employers.name", companyNames));
   }
 
@@ -414,9 +469,13 @@ export function buildCrustDataFilters(state: CrustDataFilterState): CrustDataFil
   }
 
   // Headcount ranges are fixed enums → "in"
+  // IMPORTANT: We expand the selection UPWARD — selecting "51-200" also includes
+  // all larger bands ("201-500", "501-1,000" etc.) because recruiters are not
+  // restricting by company size — they are setting a minimum company size floor.
   const headcountRange = (state.company_headcount_range ?? []).filter(Boolean);
   if (headcountRange.length > 0) {
-    conditions.push(simpleFilter("current_employers.company_headcount_range", "in", headcountRange));
+    const expandedHeadcount = expandHeadcountUpward(headcountRange);
+    conditions.push(simpleFilter("current_employers.company_headcount_range", "in", expandedHeadcount));
   }
 
   // Company type fixed enums → "in"
@@ -588,7 +647,7 @@ export function buildRelaxedFilters(state: CrustDataFilterState): CrustDataFilte
  * Preserves core filters like company, school, and industry.
  */
 export function buildExpandedRadiusFilters(state: CrustDataFilterState): CrustDataFilterTree {
-  const currentRadius = state.radius_miles ?? 30;
+  const currentRadius = state.radius_km ?? 50;
   const relaxed: CrustDataFilterState = {
     ...state,
     seniority: [],
@@ -598,7 +657,7 @@ export function buildExpandedRadiusFilters(state: CrustDataFilterState): CrustDa
     boolean_expression: state.boolean_expression?.includes(" AND ")
       ? state.boolean_expression.split(/\bAND\b/i)[0].trim()
       : state.boolean_expression,
-    radius_miles: Math.min(currentRadius * 5, 500),
+    radius_km: Math.min(currentRadius * 5, 800),
   };
   return buildCrustDataFilters(relaxed);
 }
@@ -620,7 +679,7 @@ export function buildMinimalFilters(state: CrustDataFilterState): CrustDataFilte
     boolean_expression: state.boolean_expression?.includes(" AND ")
       ? state.boolean_expression.split(/\bAND\b/i)[0].trim()
       : state.boolean_expression,
-    radius_miles: 500,
+    radius_km: 800,
     experience_min: state.experience_min ? Math.max(0, state.experience_min - 4) : undefined,
   };
   return buildCrustDataFilters(minimal);

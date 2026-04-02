@@ -35,7 +35,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function fetchCrustDataTitleSuggestions(query: string): Promise<string[]> {
-  if (!query || query.trim().length < 2) return [];
+  if (!query || query.trim().length < 3) return [];
   const cacheKey = `crustdata:suggest:title:v1:${query.trim().toLowerCase().replace(/\s+/g, "_")}`;
 
   if (redis.isAvailable) {
@@ -57,7 +57,7 @@ async function fetchCrustDataTitleSuggestions(query: string): Promise<string[]> 
 }
 
 async function fetchCrustDataRegionSuggestions(query: string): Promise<string[]> {
-  if (!query || query.trim().length < 2) return [];
+  if (!query || query.trim().length < 3) return [];
   const cacheKey = `crustdata:suggest:region:v1:${query.trim().toLowerCase().replace(/\s+/g, "_")}`;
 
   if (redis.isAvailable) {
@@ -127,6 +127,7 @@ Rules:
 3. Do not invent completely different roles (e.g. if the input is "Fleet Manager", do not return "Logistics Director").
 4. Return 3 to 8 titles. Include the base titles if they are natural LinkedIn strings.
 5. Provide ONLY a JSON array of strings. No markdown, no explanation.
+6. CRITICAL: DO NOT use commas, hyphens, or semicolons in the titles (e.g., return "Director of Public Affairs" or "Public Affairs Director" instead of "Director, Public Affairs"). Punctuation breaks exact substring matching arrays.
 
 Example Input: titles: ["Architect", "Senior Architect"], industries: ["Architecture & Planning"]
 Example Output: ["Senior Architect", "Project Architect", "Design Architect", "Associate", "Senior Associate", "Principal Architect", "Lead Architect"]
@@ -186,7 +187,6 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const accumulatedContext = body?.accumulatedContext;
-    // skipExpansion=true: user clicked Skip — use only their exact titles, no autocomplete expansion.
     const skipExpansion: boolean = body?.skipExpansion === true;
 
     if (!accumulatedContext || !accumulatedContext.job_titles?.length) {
@@ -194,42 +194,13 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Step 1: Map accumulatedContext directly to structured filter inputs ──
-    // No second LLM call. The chat AI already structured this data.
-    // Re-running extraction adds noise and invents fields (similar_job_titles, etc.)
-    // that pollute the search with irrelevant titles.
-    const userTitles: string[] = Array.isArray(accumulatedContext.job_titles)
-      ? accumulatedContext.job_titles.filter(Boolean)
+    const userTitles: string[] = (accumulatedContext.job_titles ?? [])
+      .filter(Boolean) as string[];
+    
+    const userLocations: string[] = Array.isArray(accumulatedContext.locations)
+      ? accumulatedContext.locations.filter(Boolean).map(String)
       : [];
-    // ── Granular Location Parser ──────────────────────────────────────────────
-    const COMMON_COUNTRIES = new Set([
-      "india", "usa", "united states", "uk", "united kingdom", "canada", "australia",
-      "germany", "france", "uae", "singapore", "netherlands", "brazil", "russia"
-    ]);
-
-    const parseLocationStrings = (locs: any[]): string[] => {
-      if (!Array.isArray(locs)) return [];
-      const flat = locs
-        .filter(Boolean)
-        .flatMap(loc => {
-          const s = String(loc);
-          // Split by comma first
-          if (s.includes(",")) return s.split(",").map(x => x.trim());
-          // If no comma but contains a space and looks like "Area City" (e.g. "Indiranagar Bangalore")
-          // we prefer to split it if it's a known common pattern, but for now we'll stick to 
-          // splitting by common delimiters.
-          return [s.trim()];
-        })
-        .filter(s => s.length > 0);
       
-      // Filter out broad country names unless the list would become empty
-      // This is what the user asked for: "make the broader like banglore must , but not for country"
-      const filtered = flat.filter(s => !COMMON_COUNTRIES.has(s.toLowerCase()));
-      const final = filtered.length > 0 ? filtered : flat;
-      
-      return Array.from(new Set(final));
-    };
-
-    const userLocations: string[] = parseLocationStrings(accumulatedContext.locations);
     const userIndustries: string[] = Array.isArray(accumulatedContext.industry)
       ? accumulatedContext.industry.filter(Boolean)
       : [];
@@ -261,73 +232,41 @@ export async function POST(req: NextRequest) {
       ? accumulatedContext.experience_max
       : null;
 
-    // ── Step 2: Intent-controlled seeding ──────────────────────────────────────
-    const searchIntent = accumulatedContext.search_intent ?? "balanced";
-    const { maxSeeds, maxTitles } = skipExpansion
-      ? { maxSeeds: userTitles.length, maxTitles: userTitles.length }
-      : getIntentConfig(searchIntent);
-
-    // For tight/skip: only seed the user's exact title(s) — no expansion.
-    // For balanced/wide: seed from user titles only (not LLM-invented similar titles).
-    // The autocomplete results themselves provide the LinkedIn-native variants.
-    const seedTitles = userTitles.slice(0, Math.max(maxSeeds, 1));
-    const seedLocations = userLocations.slice(0, 3);
-
-    // ── Step 3: CrustData Autocomplete + Industry Vector Search ────────────────
-    const [titleSuggsBySeeed, regionSuggsBySeeed, resolvedIndustries] = await Promise.all([
-      skipExpansion
-        ? Promise.resolve(userTitles.map(() => [] as string[]))
-        : batchedSuggestions(seedTitles, fetchCrustDataTitleSuggestions, 3, 100),
-      batchedSuggestions(seedLocations, fetchCrustDataRegionSuggestions, 3, 100),
-      userIndustries.length > 0 ? resolveIndustries(userIndustries) : Promise.resolve([]),
+    // ── Step 2: Resolve Job Titles & Regions ──────────────────────────────────
+    // CRITICAL FIX: Disable expensive expansions by default to stop credit loss.
+    // We only resolve the user's explicit seeds.
+    const [titleSuggs, regionSuggs, resolvedIndustries] = await Promise.all([
+      skipExpansion || userTitles.length === 0
+        ? Promise.resolve([])
+        : Promise.all(userTitles.map(fetchCrustDataTitleSuggestions)),
+      userLocations.length === 0
+        ? Promise.resolve([])
+        : Promise.all(userLocations.map(fetchCrustDataRegionSuggestions)),
+      userIndustries.length > 0 
+        ? resolveIndustries(userIndustries) 
+        : Promise.resolve([]),
     ]);
 
     // Resolved titles: user's titles always pinned at front, autocomplete follows.
-    // Trim to intent-controlled max so we don't send 8 titles when user wanted tight.
-    let allResolvedTitles = Array.from(new Set([
-      ...userTitles,               // pinned first — user's explicit request
-      ...titleSuggsBySeeed.flat(), // CrustData autocomplete (LinkedIn-native variants)
-    ])).slice(0, maxTitles);
+    const allResolvedTitles = Array.from(new Set([
+      ...userTitles,
+      ...titleSuggs.flat(),
+    ])).slice(0, 10);
 
-    // ── Dynamic Domain-Aware Title Cluster Injection ───────────────────────────
-    // For balanced/wide searches, leverage Gemini to capture domain-specific
-    // equivalencies (like "Associate" meaning senior in Architecture but junior in Law).
-    // This semantic expansion resolves titles that CrustData autocomplete misses.
-    if (searchIntent !== "tight" && !skipExpansion && userTitles.length > 0) {
-      const dynamicCluster = await generateDomainAwareTitleCluster(userTitles, userIndustries);
-      if (dynamicCluster.length > 0) {
-        allResolvedTitles = Array.from(new Set([
-          ...userTitles,              // user's explicit titles always first
-          ...dynamicCluster,          // domain-aware semantic cluster
-          ...allResolvedTitles,       // autocomplete generic variants
-        ])).slice(0, Math.max(maxTitles, 8)); // allow up to 8 for full cluster expression
-      }
-    }
+    // Resolved regions: prefer CrustData canonical region strings
+    const allResolvedRegions = Array.from(new Set([
+      ...userLocations,
+      ...regionSuggs.flat(),
+    ])).slice(0, 10);
 
-    // Resolved regions: prefer CrustData's canonical region string (e.g. "Vadodara Taluka, Gujarat, India")
-    // because it geocodes precisely for radius search. Fall back to a Title-Cased version of the
-    // raw seed (better geocoding than all-lowercase "vadodara").
-    const toTitleCase = (s: string) =>
-      s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-    const bestRegions = regionSuggsBySeeed
-      .map((suggestions, idx) => {
-        if (suggestions.length > 0) return suggestions[0];
-        const seed = seedLocations[idx];
-        if (!seed) return null;
-        const clean = seed.replace(/\(?remote.*?\)?/ig, "").trim();
-        // Title-case fallback gives geocoders the best chance to resolve correctly
-        return clean ? toTitleCase(clean) : null;
-      })
-      .filter(Boolean) as string[];
-    const allResolvedRegions = Array.from(new Set(bestRegions)).slice(0, 4);
+    const searchIntent = accumulatedContext.search_intent || "balanced";
+    const { maxTitles } = getIntentConfig(searchIntent);
 
-    // ── Step 4: Build extracted object directly from user context ──────────────
-    // Only populate fields the user actually specified.
-    // Sparse filters = precise results. Dense guessed filters = noise.
+    // ── Step 3: Assemble Filter State ─────────────────────────────────────────
     const extracted = {
       requirement_summary: null as string | null,
       raw_job_titles: userTitles,
-      similar_job_titles: [],        // never invent these — they caused the Fleet Manager problem
+      similar_job_titles: [],
       job_title_strategy: "include" as const,
       boolean_search_expression: null as string | null,
       domain_cluster: "other" as string,
@@ -354,15 +293,15 @@ export async function POST(req: NextRequest) {
       time_in_current_company_max: null,
     };
 
-    // ── Step 5: Assemble CrustData filter tree ────────────────────────────────
     const { filterTree, filterState } = assembleCrustDataFilters({
-      extracted,
+      extracted: extracted as any,
       resolvedTitles: allResolvedTitles,
       resolvedRegions: allResolvedRegions,
       resolvedIndustries: resolvedIndustries.length > 0 ? resolvedIndustries : undefined,
-      radiusMiles: 30,
+      radiusKm: 50,
       booleanSearchExpression: null,
       userTitles,
+      ranking_priority: accumulatedContext.ranking_priority as any,
     });
 
     // ── Step 6: Build response ────────────────────────────────────────────────

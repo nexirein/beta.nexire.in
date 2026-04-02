@@ -13,7 +13,8 @@ import { sanitizeTitle } from "@/lib/utils/sanitizeTitle";
 import { CompanyHoverCard } from "@/components/search/CompanyHoverCard";
 import { InstituteHoverCard } from "@/components/search/InstituteHoverCard";
 import { useSearchStore } from "@/lib/store/search-store";
-import { getProxiedImageUrl } from "@/lib/utils/image-proxy";
+
+import { InsightText } from "@/components/search/InsightText";
 
 const LOGO_DEV_KEY = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN ?? "pk_JgbzA-I-Ssu_JN0iUMq1rQ";
 const LOGO_SEARCH_CACHE: Record<string, string | null> = {};
@@ -123,31 +124,27 @@ function InstituteAvatar({ logoUrl, name, size = 32 }: { logoUrl?: string | null
   );
 }
 
-function ProfileAvatar({ url, permalink, name, size = 64 }: { url?: string | null; permalink?: string | null; name: string; size?: number }) {
-  const [src, setSrc] = useState<string | null>(url ?? null);
-  const [usedPermalink, setUsedPermalink] = useState(false);
-  const initials = name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("");
-  if (src) {
-    const proxiedSrc = getProxiedImageUrl(src);
-    return (
-      <img src={proxiedSrc ?? ""} alt={name} width={size} height={size}
-        className="rounded-full object-cover ring-2 ring-indigo-100 flex-shrink-0 shadow-sm"
-        style={{ width: size, height: size }}
-        onContextMenu={(e) => e.preventDefault()}
-        draggable={false}
-        onError={() => {
-          if (!usedPermalink && permalink) { setUsedPermalink(true); setSrc(permalink); }
-          else setSrc(null);
-        }}
-      />
-    );
-  }
+/** Gradient initials badge — replaces profile photo completely */
+function InitialsBadge({ name, size = 56 }: { name: string; size?: number }) {
+  // Pick a color based on first letter for personality
+  const COLORS = [
+    ["from-indigo-400 to-indigo-600", "text-white"],
+    ["from-violet-400 to-violet-600", "text-white"],
+    ["from-blue-400 to-blue-600", "text-white"],
+    ["from-emerald-400 to-emerald-600", "text-white"],
+    ["from-amber-400 to-orange-500", "text-white"],
+    ["from-pink-400 to-rose-500", "text-white"],
+    ["from-teal-400 to-cyan-600", "text-white"],
+  ];
+  const charCode = (name.charCodeAt(0) || 0) % COLORS.length;
+  const [gradient, textColor] = COLORS[charCode];
+  const initials = name.split(" ").slice(0, 2).map(w => w[0]?.toUpperCase() ?? "").join("") || "?";
   return (
     <div
-      className="rounded-full bg-gradient-to-br from-indigo-50 to-indigo-100 border-2 border-indigo-200 flex items-center justify-center font-bold text-indigo-600 flex-shrink-0 shadow-sm"
-      style={{ width: size, height: size, fontSize: size * 0.33 }}
+      className={`rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center font-black ${textColor} flex-shrink-0 shadow-md select-none`}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}
     >
-      {initials || "?"}
+      {initials}
     </div>
   );
 }
@@ -173,9 +170,9 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
   const [expandedJobs, setExpandedJobs]   = useState<Set<number>>(new Set());
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
-  
   // Safe accessor if used outside search context
   const projectId = typeof useSearchStore === "function" ? useSearchStore((s) => s.projectId) : null;
+  const searchId = typeof useSearchStore === "function" ? useSearchStore((s) => s.searchId) : null;
 
   useEffect(() => {
     if (!candidate.person_id) return;
@@ -232,11 +229,15 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
   const [activeTab, setActiveTab] = useState<string>("overview");
 
   // Derived data
-  const profilePicUrl: string | null = raw.profile_picture_url ?? null;
-  const profilePicPermalink: string | null = raw.profile_picture_permalink ?? null;
   const twitterHandle: string | null = raw.twitter_handle || null;
   const summary: string | null = raw.summary ?? null;
-  const languages: string[] = raw.languages ?? [];
+  // Check multiple crustdata fields for languages
+  const languages: string[] = (
+    raw.languages ??
+    raw.languages_v2 ??
+    raw.spoke_languages ??
+    []
+  );
   const openToCards: any[] = raw.open_to_cards ?? [];
   const isOpenToWork = openToCards.length > 0 || !!raw.recently_changed_jobs;
   const allEmployers: any[] = raw.all_employers ?? [];
@@ -357,13 +358,12 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
   if (isSimulatingLoad) {
     return (
       <div className="flex flex-col h-full bg-white relative overflow-hidden">
-        {/* Shimmer overlay wrapper */}
-        <div className="absolute inset-0 z-0 bg-white" />
         <div className="relative z-10 flex flex-col h-full overflow-hidden">
-          {/* Header Skeleton */}
+          {/* Header Skeleton — no avatar circle */}
           <div className="px-7 pt-7 pb-6 border-b border-gray-100 flex-shrink-0 animate-pulse">
             <div className="flex items-start gap-5">
-              <div className="w-16 h-16 rounded-full bg-indigo-50/50 flex-shrink-0" />
+              {/* Initials badge placeholder */}
+              <div className="w-14 h-14 rounded-2xl bg-indigo-100/60 flex-shrink-0" />
               <div className="flex-1 space-y-3 pt-1">
                 <div className="h-5 bg-gray-100 rounded-md w-1/3" />
                 <div className="h-4 bg-gray-50 rounded-md w-2/3" />
@@ -373,13 +373,16 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                   <div className="h-4 w-16 bg-gray-50 rounded" />
                 </div>
               </div>
-              <div className="w-14 h-14 rounded-full bg-gray-50 flex-shrink-0 ml-4" />
+              <div className="w-12 h-7 bg-gray-50 rounded-lg flex-shrink-0 ml-4" />
             </div>
             
             <div className="flex gap-3 mt-6">
               <div className="flex-1 h-10 bg-gray-50 rounded-lg" />
               <div className="flex-1 h-10 bg-gray-50 rounded-lg" />
-              <div className="flex-1 h-10 bg-indigo-50/30 rounded-lg md:max-w-xs" />
+            </div>
+            <div className="flex gap-3 mt-2.5">
+              <div className="flex-1 h-9 bg-gray-50 rounded-lg" />
+              <div className="flex-1 h-9 bg-gray-50 rounded-lg" />
             </div>
           </div>
           
@@ -392,7 +395,6 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
 
           {/* Body Skeleton */}
           <div className="px-7 py-8 space-y-8 flex-1 bg-gray-50/30">
-            {/* Overview */}
             <div className="space-y-4 animate-pulse">
               <div className="h-4 w-20 bg-gray-200 rounded-md" />
               <div className="space-y-2">
@@ -406,8 +408,6 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                 ))}
               </div>
             </div>
-
-            {/* Experience */}
             <div className="space-y-5 pt-4 animate-pulse">
               <div className="h-4 w-24 bg-gray-200 rounded-md" />
               {[1, 2].map(i => (
@@ -416,8 +416,6 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                   <div className="flex-1 space-y-2">
                     <div className="h-4 w-1/3 bg-gray-200 rounded-md" />
                     <div className="h-3 w-1/4 bg-gray-100 rounded-md" />
-                    <div className="h-3 w-[85%] bg-gray-50 rounded-md pt-2" />
-                    <div className="h-3 w-[70%] bg-gray-50 rounded-md" />
                   </div>
                 </div>
               ))}
@@ -434,24 +432,20 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
       {/* ── HEADER ──────────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 px-7 pt-7 pb-6 bg-white z-10">
         <div className="flex items-start gap-5">
-          {/* Avatar */}
-          <div className="relative flex-shrink-0 mt-1">
-            <ProfileAvatar url={profilePicUrl} permalink={profilePicPermalink} name={full_name} size={64} />
-            {isOpenToWork && (
-              <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white shadow-sm" title="Open to work" />
-            )}
-          </div>
-
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <h2 className="text-[18px] font-extrabold text-gray-900 leading-tight truncate">{full_name}</h2>
               {linkedin_url && (
-                <a href={linkedin_url} target="_blank" rel="noopener noreferrer" className="opacity-90 hover:opacity-100 transition-opacity">
+                <a href={linkedin_url} target="_blank" rel="noopener noreferrer" className="opacity-80 hover:opacity-100 transition-opacity flex-shrink-0" title="LinkedIn Profile">
                   <LinkedInSVGMini />
                 </a>
               )}
+              {twitterHandle && (
+                <a href={`https://x.com/${twitterHandle}`} target="_blank" rel="noopener noreferrer" className="opacity-75 hover:opacity-100 transition-opacity flex-shrink-0" title={`@${twitterHandle} on X`}>
+                  <img src="/assets/logos/twitter.webp" alt="X" width={14} height={14} className="object-contain" />
+                </a>
+              )}
             </div>
-            
             {(current_title || headline) && (
               <div className="flex items-center gap-1.5 flex-wrap text-[13.5px] font-medium text-gray-700 leading-snug">
                 <span>{sanitizeTitle(current_title || headline || "")}</span>
@@ -499,60 +493,71 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
                   <Sparkles className="w-3 h-3" /> OPEN TO WORK
                 </span>
               )}
-              {twitterHandle && (
-                <a href={`https://x.com/${twitterHandle}`} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-gray-200 text-gray-600 hover:border-black hover:text-black hover:bg-gray-50 transition-colors font-medium">
-                  <XIcon /> @{twitterHandle}
-                </a>
-              )}
             </div>
           </div>
 
-          <div className="flex flex-col items-center gap-1 flex-shrink-0 ml-4">
-            <div className="relative w-14 h-14">
-              <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 48 48">
-                <circle cx="24" cy="24" r="20" strokeWidth="3.5" className="stroke-gray-100 fill-none" />
-                <motion.circle initial={{ strokeDashoffset: strokeDash }} animate={{ strokeDashoffset: strokeOffset }} transition={{ duration: 1 }} cx="24" cy="24" r="20" className={cn("fill-none", scoreColor)} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={String(strokeDash)} stroke="currentColor" />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className={cn("text-[14px] font-extrabold tabular-nums", scoreColor)}>{ai_score}</span>
-              </div>
-            </div>
-            <span className={cn("text-[9px] font-bold uppercase tracking-widest leading-none mt-1", scoreColor)}>
-              {match_label?.split(" ")[0]}
+          <div className="flex flex-col items-end gap-1 flex-shrink-0 ml-4 mt-2">
+            <span className={cn("px-3 py-1.5 rounded-lg text-[11px] font-extrabold uppercase tracking-widest border bg-white shadow-sm flex items-center gap-1.5", scoreColor, "border-gray-100")}>
+              <span className={cn("w-2 h-2 rounded-full", "bg-current", "opacity-80")} />
+              {ai_score >= 80 ? "EXCELLENT" : ai_score >= 65 ? "STRONG" : ai_score >= 50 ? "GOOD" : "POTENTIAL"}
             </span>
           </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2 mt-6 flex-wrap">
-          <button onClick={revealEmail} disabled={emailLoading || !!revealedEmail || !linkedin_url}
-            className={cn("flex-1 min-w-[120px] flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-semibold rounded-lg border transition-all",
-              revealedEmail ? "border-emerald-200 bg-emerald-50/50 text-emerald-700 font-mono tracking-tight" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50")}>
-            {emailLoading ? <span className="animate-spin w-3.5 h-3.5 border-2 border-gray-400 border-t-gray-700 rounded-full" /> : revealedEmail ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Mail className="w-4 h-4 text-gray-400" />}
-            {revealedEmail ? revealedEmail : <>Email <span className="opacity-40 font-normal">| 1cr</span></>}
-          </button>
+        <div className="mt-6 flex flex-col gap-3">
+          {/* Primary Row: Value Proposition (Contact Info) */}
+          <div className="flex gap-2.5">
+            <button onClick={revealPhone} disabled={phoneLoading || !!revealedPhone || !linkedin_url}
+              className={cn("flex-1 flex justify-center items-center gap-2 px-4 py-2.5 text-[13px] font-bold rounded-lg border transition-all shadow-sm",
+                revealedPhone 
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-mono tracking-tight" 
+                  : "border-transparent bg-indigo-600 text-white hover:bg-indigo-700 ring-1 ring-indigo-700/50")}>
+              {phoneLoading ? (
+                <span className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+              ) : revealedPhone ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <Smartphone className="w-4 h-4 opacity-90" />
+              )}
+              {revealedPhone ? revealedPhone : (
+                <span className="flex items-center">Unlock Phone <span className="opacity-70 font-medium ml-1.5 border-l border-white/20 pl-1.5 flex items-center gap-1">8cr</span></span>
+              )}
+            </button>
+            
+            <button onClick={revealEmail} disabled={emailLoading || !!revealedEmail || !linkedin_url}
+              className={cn("flex-1 flex justify-center items-center gap-2 px-4 py-2.5 text-[13px] font-bold rounded-lg border transition-all shadow-sm",
+                revealedEmail 
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-mono tracking-tight" 
+                  : "border-gray-200 bg-white text-gray-900 hover:bg-gray-50")}>
+              {emailLoading ? (
+                <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-700 rounded-full" />
+              ) : revealedEmail ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <Mail className="w-4 h-4 text-gray-500" />
+              )}
+              {revealedEmail ? revealedEmail : (
+                <span className="flex items-center">Unlock Email <span className="text-gray-400 font-medium ml-1.5 border-l border-gray-200 pl-1.5 flex items-center gap-1">1cr</span></span>
+              )}
+            </button>
+          </div>
           
-          <button onClick={revealPhone} disabled={phoneLoading || !!revealedPhone || !linkedin_url}
-            className={cn("flex-1 min-w-[120px] flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-semibold rounded-lg border transition-all",
-              revealedPhone ? "border-emerald-200 bg-emerald-50/50 text-emerald-700 font-mono tracking-tight" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50")}>
-            {phoneLoading ? <span className="animate-spin w-3.5 h-3.5 border-2 border-gray-400 border-t-gray-700 rounded-full" /> : revealedPhone ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Smartphone className="w-4 h-4 text-gray-400" />}
-            {revealedPhone ? revealedPhone : <>Mobile <span className="opacity-40 font-normal">| 8cr</span></>}
-          </button>
-
-          <button onClick={toggleShortlist} disabled={shortlistLoading}
-            className={cn("flex-1 min-w-[120px] flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-bold rounded-lg border transition-all",
-              isShortlisted 
-                ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" 
-                : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50")}>
-            {shortlistLoading ? <span className="animate-spin w-3.5 h-3.5 border-2 border-gray-400 border-t-gray-700 rounded-full" /> : <Star className={cn("w-3.5 h-3.5", isShortlisted && "fill-amber-500 text-amber-500")} />}
-            {isShortlisted ? "Shortlisted" : "Shortlist"}
-          </button>
-
-          <button onClick={() => onSequenceEnroll?.(candidate)}
-            className="flex-1 min-w-[120px] flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-bold rounded-lg border border-transparent bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm transition-all">
-            <Send className="w-3.5 h-3.5" />Sequence
-          </button>
+          {/* Secondary Row: Workflow */}
+          <div className="flex gap-2.5">
+            <button onClick={toggleShortlist} disabled={shortlistLoading}
+              className={cn("flex-1 flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-semibold rounded-lg border transition-all",
+                isShortlisted 
+                  ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" 
+                  : "border-gray-200 bg-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50")}>
+              {shortlistLoading ? <span className="animate-spin w-3.5 h-3.5 border-2 border-gray-300 border-t-amber-500 rounded-full" /> : <Star className={cn("w-3.5 h-3.5", isShortlisted && "fill-amber-500 text-amber-500")} />}
+              {isShortlisted ? "Shortlisted" : "Add to Shortlist"}
+            </button>
+            <button onClick={() => onSequenceEnroll?.(candidate)}
+              className="flex-1 flex justify-center items-center gap-2 px-3 py-2 text-[12.5px] font-semibold rounded-lg border border-gray-200 bg-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition-all">
+              <Send className="w-3.5 h-3.5" /> Automate Sequence
+            </button>
+          </div>
         </div>
       </div>
 
@@ -572,26 +577,47 @@ export function CandidateProfilePanel({ candidate, onSequenceEnroll, onRevealSuc
         
         {/* OVERVIEW */}
         <section id="section-overview" className="scroll-mt-[80px]">
-            {aiSignal && (
-              <div className="mb-8 p-4 bg-indigo-50/40 border-l-4 border-indigo-400 rounded-r-xl relative overflow-hidden group">
-                <Sparkles className="absolute -right-2 -top-2 w-12 h-12 text-indigo-100/50 -rotate-12 transition-transform group-hover:scale-110" />
-                <p className="text-[14.5px] font-bold text-indigo-900 leading-relaxed italic relative z-10">
-                  "{aiSignal}"
+            {/* Match Context Vector */}
+            {(() => {
+              const matchSignals = [];
+              if (candidate.score_breakdown?.title && candidate.score_breakdown.title >= 30) matchSignals.push("Exact Title");
+              if (candidate.experience_years && candidate.experience_years > 0) matchSignals.push(`${candidate.experience_years} yrs exp`);
+              if (candidate.location_city) matchSignals.push(candidate.location_city);
+              const matchSignalStr = matchSignals.length > 0 ? "Matched on: " + matchSignals.join(" · ") : null;
+              
+              if (!matchSignalStr) return null;
+              return (
+                <p className="text-[13.5px] font-bold text-gray-500 mb-4 tracking-tight uppercase">
+                  {matchSignalStr}
                 </p>
-                <div className="mt-2 flex items-center gap-1.5 opacity-60">
-                  <Sparkles className="w-3 h-3 text-indigo-400" />
-                  <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">AI MATCH SIGNAL</span>
-                </div>
-              </div>
-            )}
+              );
+            })()}
+
+            {/* AI Insight (Consistent with list view) */}
+            <div className="mb-8 pl-1">
+              <InsightText
+                personId={person_id}
+                searchId={searchId || ""}
+                enabled={true}
+                contextData={{
+                  currentTitle: current_title || headline || "",
+                  currentCompany: raw.current_employers?.[0]?.name || "",
+                  experienceYears: candidate.experience_years || 0,
+                  skills: candidate.skills || [],
+                  educationStr: raw.education_background?.[0]?.institute_name || null,
+                  summary: raw.summary || null,
+                  ai_insight: candidate.ai_insight,
+                }}
+              />
+            </div>
 
             {summary && (
-              <div className="mb-6">
-                <h3 className="text-[14px] font-bold text-gray-900 mb-2">About</h3>
-                <p className={cn("text-[13px] text-gray-600 leading-relaxed font-light", !summaryOpen && "line-clamp-3")}>{summary}</p>
+              <div className="mb-8 relative pl-4 border-l-[3px] border-gray-200/60">
+                <h3 className="text-[11.5px] font-bold text-gray-400 uppercase tracking-wider mb-2">Raw Bio (LinkedIn)</h3>
+                <p className={cn("text-[13.5px] text-gray-600 leading-relaxed font-light", !summaryOpen && "line-clamp-3")}>{summary}</p>
                 {summary.length > 200 && (
-                  <button onClick={() => setSummaryOpen(!summaryOpen)} className="flex items-center gap-1 mt-1.5 text-[11.5px] font-medium text-indigo-600 hover:text-indigo-800">
-                    {summaryOpen ? "Show less" : "Read more"}
+                  <button onClick={() => setSummaryOpen(!summaryOpen)} className="flex items-center gap-1 mt-2 text-[12px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors">
+                    {summaryOpen ? "Show less bio" : "Read full bio"}
                   </button>
                 )}
               </div>
